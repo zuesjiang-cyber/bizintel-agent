@@ -1,0 +1,18 @@
+[
+  {
+    "source_id": "stripe_profile",
+    "source_type": "profile",
+    "title": "Stripe - Company Profile",
+    "url": null,
+    "date": null,
+    "company": "Stripe"
+  },
+  {
+    "source_id": "stripe_about",
+    "source_type": "webpage",
+    "title": "about",
+    "url": "https://stripe.com/about\\nDate: 2025-01-XX\\nTitle: Stripe About\\n\\nStripe is a financial infrastructure platform for the internet. Millions of companies\u2014from the world\u2019s largest enterprises to the most ambitious startups\u2014use Stripe to accept payments, grow their revenue, and accelerate new business opportunities. Headquartered in San Francisco and Dublin, the company aims to increase the GDP of the internet.",
+    "date": null,
+    "company": "stripe"
+  }
+]

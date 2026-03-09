@@ -1,0 +1,23 @@
+{
+    "company_name": "Stripe",
+    "founded": "2010",
+    "headquarters": "San Francisco, CA / Dublin, Ireland",
+    "founders": [
+        "Patrick Collison",
+        "John Collison"
+    ],
+    "employee_count": "~8,000",
+    "latest_valuation": "$50B (as of 2025 re-valuation)",
+    "total_funding": "$8.7B",
+    "latest_round": "Series I, $6.5B, March 2023",
+    "industry": "Fintech / Payments",
+    "website": "https://stripe.com",
+    "key_products": [
+        "Stripe Payments",
+        "Stripe Connect",
+        "Stripe Atlas",
+        "Stripe Treasury",
+        "Stripe Tax"
+    ],
+    "target_customers": "Internet businesses, SaaS companies, marketplaces, platforms"
+}

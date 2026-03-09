@@ -1,0 +1,16 @@
+[
+  {
+    "chunk_id": "160831d4dd16",
+    "text": "Company: Stripe\nFounded: 2010\nHeadquarters: San Francisco, CA / Dublin, Ireland\nFounders: Patrick Collison, John Collison\nEmployees: ~8,000\nTotal Funding: $8.7B\nLatest Round: Series I, $6.5B, March 2023\nLatest Valuation: $50B (as of 2025 re-valuation)\nIndustry: Fintech / Payments\nKey Products: Stripe Payments, Stripe Connect, Stripe Atlas, Stripe Treasury, Stripe Tax\nTarget Customers: Internet businesses, SaaS companies, marketplaces, platforms",
+    "source_id": "stripe_profile",
+    "page": null,
+    "token_count": 123
+  },
+  {
+    "chunk_id": "d47428682c4b",
+    "text": "Source: https://stripe.com/about\\nDate: 2025-01-XX\\nTitle: Stripe About\\n\\nStripe is a financial infrastructure platform for the internet. Millions of companies\u2014from the world\u2019s largest enterprises to the most ambitious startups\u2014use Stripe to accept payments, grow their revenue, and accelerate new business opportunities. Headquartered in San Francisco and Dublin, the company aims to increase the GDP of the internet.",
+    "source_id": "stripe_about",
+    "page": null,
+    "token_count": 84
+  }
+]

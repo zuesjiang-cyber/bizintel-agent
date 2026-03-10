@@ -29,7 +29,13 @@ logger = logging.getLogger(__name__)
 class AnalysisExecutor:
     def __init__(self, retriever: HybridRetriever):
         self.retriever = retriever
-        self.client = OpenAI(api_key=settings.openai_api_key)
+        # Do not initialize client here; settings might not have the key yet
+        self.client = None
+
+    def _get_client(self):
+        if self.client is None:
+            self.client = OpenAI(api_key=settings.openai_api_key, base_url=settings.openai_api_base)
+        return self.client
 
     def execute_plan(self, plan: AnalysisPlan) -> Dict[str, Any]:
         """
@@ -183,7 +189,8 @@ Instructions:
 
 Write the analysis for this section:"""
 
-        response = self.client.chat.completions.create(
+        client = self._get_client()
+        response = client.chat.completions.create(
             model=settings.openai_model,
             messages=[{"role": "user", "content": prompt}],
             max_tokens=1000,

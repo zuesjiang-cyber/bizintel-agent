@@ -22,6 +22,9 @@ def build_index(company_name: str = None):
 
     all_chunks = []
     processed_dir = settings.data_dir / "processed"
+    if not processed_dir.exists():
+        print(f"Processed data directory not found: {processed_dir}. Run ingest first.")
+        return
 
     if company_name:
         companies = [company_name]
@@ -37,6 +40,9 @@ def build_index(company_name: str = None):
             print(f"Loaded {len(chunks)} chunks from {company}")
 
     print(f"\nTotal chunks: {len(all_chunks)}")
+    if not all_chunks:
+        print("No chunks found. Nothing to index.")
+        return
 
     retriever.index(all_chunks)
 

@@ -1,9 +1,10 @@
 import argparse
 import sys
 from pathlib import Path
+import getpass
 
 from agent.schemas import AnalysisMode
-from agent.orchestrator import BizIntelAgent
+from agent.config import settings
 
 def main():
     parser = argparse.ArgumentParser(description="BizIntel Agent: AI-powered business research")
@@ -24,6 +25,16 @@ def main():
             mode = AnalysisMode.INDUSTRY
         elif mode_str == "competitive":
             mode = AnalysisMode.COMPETITIVE
+
+    if not settings.openai_api_key:
+        print("未检测到 API Key。请进行隐式输入：")
+        api_key = getpass.getpass("API Key: ")
+        if not api_key.strip():
+            print("❌ 错误：必须提供 API Key 才能运行", file=sys.stderr)
+            sys.exit(1)
+        settings.openai_api_key = api_key.strip()
+        
+    from agent.orchestrator import BizIntelAgent
 
     try:
         agent = BizIntelAgent()

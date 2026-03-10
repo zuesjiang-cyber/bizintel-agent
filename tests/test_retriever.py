@@ -12,7 +12,7 @@ from retrieval.hybrid_retriever import HybridRetriever
 @pytest.fixture(scope="module")
 def retriever():
     """创建一个带小型测试数据的 retriever"""
-    r = HybridRetriever()
+    r = HybridRetriever(load_models=False)
     test_chunks = [
         {
             "chunk_id": "c1",

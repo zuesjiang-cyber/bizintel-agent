@@ -105,6 +105,9 @@ class BizIntelAgent:
         # 加载来源元数据
         source_metas = {}
         processed_dir = settings.data_dir / "processed"
+        if not processed_dir.exists():
+            logger.warning(f"Processed data directory not found: {processed_dir}")
+            return []
         for company_dir in processed_dir.iterdir():
             if company_dir.is_dir():
                 sources_file = company_dir / "sources.json"

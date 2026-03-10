@@ -10,6 +10,7 @@ Run multiple test queries against the agent and record the metrics:
 import json
 import logging
 import sys
+import getpass
 from pathlib import Path
 from datetime import datetime
 
@@ -98,6 +99,14 @@ def evaluate(benchmark_file: Path, output_file: Path):
     logger.info(f"Results saved to {output_file}")
 
 if __name__ == "__main__":
+    if not settings.openai_api_key:
+        print("未检测到 API Key，评测程序需要真实的 LLM API：")
+        api_key = getpass.getpass("API Key (隐式输入): ")
+        if not api_key.strip():
+            logger.error("❌必须提供 API Key 才能完成评测")
+            sys.exit(1)
+        settings.openai_api_key = api_key.strip()
+        
     benchmark_path = settings.eval_cases_dir / "benchmark.json"
     output_path = settings.data_dir.parent / "eval" / "results" / f"eval_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     

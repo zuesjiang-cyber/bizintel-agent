@@ -1,0 +1,7 @@
+{
+    "source_id": "stripe_revenue",
+    "title": "Stripe Financial Metrics and Payment Volume 2023-2024",
+    "source_url": "https://stripe.com/annual-updates/2023",
+    "date": "2024-02-28",
+    "content": "Stripe demonstrated remarkable financial growth and scale throughout 2023. The fintech giant surpassed $1 trillion in total payment volume (TPV) for the year, representing a 25% increase compared to 2022. This massive volume corresponds to approximately 1% of the global gross domestic product (GDP).\n\nIn terms of revenue, Stripe is estimated to have generated approximately $14 billion in gross revenue in 2023. Net revenue, which excludes the fees passed on to financial partners like Visa, Mastercard, and banks, is estimated to be around $3.5 billion to $4 billion. Despite the massive scale, Stripe's core business model continues to rely heavily on its standard pricing of 2.9% plus 30 cents per successful card charge, though enterprise clients negotiate custom rates.\n\nStripe's customer base exceeds millions of businesses worldwide, including more than 100 enterprise companies that each process over $1 billion annually with Stripe. Notable high-volume customers include Amazon, Ford, Salesforce, and OpenAI."
+}

@@ -111,6 +111,7 @@ class Claim:
     cited_sources: List[str] = field(default_factory=list)
     contains_numbers: bool = False
     extracted_numbers: List[str] = field(default_factory=list)
+    specificity_score: float = 0.0
 
 
 @dataclass

@@ -1,113 +1,135 @@
-"""
-BizIntel Agent - Streamlit Frontend
-"""
-
 import streamlit as st
-import time
-from agent.schemas import AnalysisMode
+import pandas as pd
+from agent.schemas import AnalysisMode, ConfidenceLevel
 from agent.orchestrator import BizIntelAgent
 
-# Must be called as the first Streamlit command
-st.set_page_config(
-    page_title="BizIntel Agent",
-    page_icon="🤖",
-    layout="wide"
-)
+# Configuration and Title
+st.set_page_config(page_title="BizIntel Agent", page_icon="📈", layout="wide")
 
-@st.cache_resource
-def get_agent():
-    # Cache the agent so models aren't reloaded on every run
-    with st.spinner("Initializing AI Models & Retriever..."):
-        agent = BizIntelAgent()
-    return agent
+st.title("📈 BizIntel Agent")
+st.markdown("An automated business intelligence research and hallucination-free report generation system.")
 
-def main():
-    st.title("🤝 BizIntel AI Research Agent")
-    st.markdown("Automated Business Intelligence & Research Report Generation")
-
-    # --- Sidebar Configuration ---
-    with st.sidebar:
-        st.header("⚙️ Configuration")
-        
-        mode_option = st.selectbox(
-            "Analysis Mode (Optional):",
-            ["Auto-Detect", "Company Profile", "Industry Landscape", "Competitive Comparison"]
-        )
-        mode = None
-        if mode_option == "Company Profile":
-            mode = AnalysisMode.COMPANY
-        elif mode_option == "Industry Landscape":
-            mode = AnalysisMode.INDUSTRY
-        elif mode_option == "Competitive Comparison":
-            mode = AnalysisMode.COMPETITIVE
-            
-        st.markdown("---")
-        st.markdown("**Supported Companies in Sandbox:**\n- Stripe\n- Notion\n- Databricks")
-
-    # --- Main Interface ---
-    st.info("💡 **Example Queries:** 'Analyze Stripe', 'Compare Stripe vs Adyen', 'Fintech industry trends'")
+# Sidebar Configuration
+with st.sidebar:
+    st.header("Configuration")
     
-    query = st.text_input("Enter your research topic:", placeholder="e.g. Give me a deep dive on Databricks...")
+    preset_queries = [
+        "Select a preset query...",
+        "Analyze Stripe in depth",
+        "Compare Stripe vs PayPal",
+        "Global digital payments industry trends and outlook"
+    ]
+    
+    selected_preset = st.selectbox("Presets", preset_queries)
+    
+    # Decide initial query value
+    default_query = ""
+    if selected_preset != "Select a preset query...":
+        default_query = selected_preset
+        
+    query = st.text_area("Research Query", value=default_query, height=100, 
+                         placeholder="e.g. Analyze Stripe's business model and competitive position")
+                         
+    mode_mapping = {
+        "Auto-Detect": None,
+        "Company Deep Dive": AnalysisMode.COMPANY,
+        "Competitive Analysis": AnalysisMode.COMPETITIVE,
+        "Industry Landscape": AnalysisMode.INDUSTRY
+    }
+    
+    selected_mode = st.selectbox("Force Analysis Mode", list(mode_mapping.keys()))
+    
+    start_btn = st.button("🚀 Start Analysis", use_container_width=True, type="primary")
 
-    if st.button("Generate Report", type="primary"):
-        if not query.strip():
-            st.warning("Please enter a research topic.")
-            return
+def get_confidence_color(level: ConfidenceLevel):
+    mapping = {
+        ConfidenceLevel.STRONG: "🟢",
+        ConfidenceLevel.MODERATE: "🟡",
+        ConfidenceLevel.WEAK: "🟠",
+        ConfidenceLevel.UNSUPPORTED: "🔴"
+    }
+    return mapping.get(level, "⚪️")
 
-        try:
-            agent = get_agent()
+# Main Execution Logic
+if start_btn and query:
+    st.divider()
+    
+    # Progress indication
+    progress_text = "Initializing BizIntel Orchestrator..."
+    my_bar = st.progress(0, text=progress_text)
+    
+    try:
+        my_bar.progress(10, text="Agent Planning: Generating Query Graph...")
+        agent = BizIntelAgent()
+        
+        my_bar.progress(30, text="Executing Retrieval & LLM Synthesis...")
+        mode_enum = mode_mapping[selected_mode]
+        with st.spinner('Running multi-step hybrid retrieval and analysis pipeline... This may take up to a minute.'):
+            # Run the agent
+            memo = agent.research(query=query, mode=mode_enum)
+        
+        my_bar.progress(80, text="Running NLI Fact Verification...")
+        # (This is logically bundled inside agent.research, but we simulate progress for UX)
+        
+        my_bar.progress(100, text="Report Generation Complete!")
+        
+        # UI DISPLAY
+        st.header(f"Results: {memo.title}")
+        st.caption(f"Generated on: {memo.generated_at[:16]} | Base Mode: {memo.mode.value} | System Confidence: {memo.overall_confidence:.0%}")
+        
+        st.subheader("Executive Summary")
+        with st.container(border=True):
+            # Render executive summary correctly by picking the generated text snippet from writer.
+            # We will use the report_writer to re-render just the exec summary if we want, or do it inline.
+            all_content = "\\n\\n".join(s.content for s in memo.sections)
+            exec_summary = agent.report_writer._generate_executive_summary(all_content)
+            st.markdown(exec_summary)
+
+        st.subheader("Analysis Breakdown")
+        for section in memo.sections:
+            title_clean = section.title.replace("_", " ").title()
+            # Expanders
+            with st.expander(f"📖 {title_clean}", expanded=False):
+                st.markdown(section.content)
+        
+        # Verification Summary
+        st.subheader("Verification & NLI Auditing")
+        all_results = []
+        for s in memo.sections:
+            all_results.extend(s.verification_results)
             
-            with st.status("🧠 Agent is working...", expanded=True) as status:
-                st.write(f"Initiating research for: **{query}**")
-                
-                # Mock progress for UI feedback during the blocking call
-                start_time = time.time()
-                
-                # Run the actual research pipeline
-                result = agent.research(query=query, mode=mode)
-                
-                elapsed = time.time() - start_time
-                status.update(label=f"✅ Research completed in {elapsed:.1f}s", state="complete", expanded=False)
-
-            # Display the result
-            memo = result["memo_object"]
-            markdown_text = result["memo_markdown"]
-            events = result["workflow_events"]
+        if all_results:
+            stats = agent.report_writer.verifier.summary_stats(all_results)
             
-            # --- Tabs for different views ---
-            tab_report, tab_sources, tab_logs = st.tabs(["📝 Final Report", "📚 Sources & Verification", "🛠️ Execution Logs"])
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Total Claims Extracted", stats["total_claims"])
+            col2.metric("Citation Coverage", f"{stats['citation_coverage']:.0%}")
+            col3.metric("Avg NLI Entailment", f"{stats['avg_nli_score']:.2f}")
+            col4.metric("Unsupported Claims", stats["unsupported"])
             
-            with tab_report:
-                # Provide download button
-                st.download_button(
-                    label="⬇️ Download Markdown",
-                    data=markdown_text,
-                    file_name=f"BizIntel_{query[:15].replace(' ', '_')}.md",
-                    mime="text/markdown"
-                )
-                st.markdown(markdown_text)
-                
-            with tab_sources:
-                st.subheader("Cited Sources")
-                for source in memo.sources:
-                    st.markdown(f"- **[{source.source_id}]** {source.title}")
-                    
-                st.subheader("Confidence Score")
-                st.metric(label="Overall Confidence (Citation Coverage)", value=f"{memo.overall_confidence:.0%}")
-                
-            with tab_logs:
-                st.subheader("Workflow Execution Trace")
-                for event in events:
-                    if event["event_type"] == "started":
-                        st.text(f"▶️ [{event['timestamp']}] {event['node_name']} started")
-                    elif event["event_type"] == "succeeded":
-                        st.text(f"✅ [{event['timestamp']}] {event['node_name']} succeeded ({event.get('detail', '')})")
-                    elif event["event_type"] == "failed":
-                        st.error(f"❌ [{event['timestamp']}] {event['node_name']} failed: {event.get('detail', '')}")
+            # DataFrame for claims
+            st.markdown("#### Claim Validation Details")
+            claim_data = []
+            for r in all_results:
+                icon = get_confidence_color(r.confidence)
+                claim_data.append({
+                    "Status": f"{icon} {r.confidence.value.upper()}",
+                    "Claim Text": r.claim.text,
+                    "NLI Score": round(r.nli_score, 2),
+                    "Sources": ", ".join(r.claim.cited_sources)
+                })
+            
+            df = pd.DataFrame(claim_data)
+            st.dataframe(df, use_container_width=True, hide_index=True)
+            
+        else:
+            st.info("No claims verified. (Offline mode or short text)")
 
-        except Exception as e:
-            st.error(f"An error occurred: {str(e)}")
-            st.exception(e)
+        # Sources
+        st.subheader("Sources Referenced")
+        with st.expander("📚 View Reference Library", expanded=False):
+            sources_md = agent.report_writer._format_sources(memo.sources)
+            st.markdown(sources_md)
 
-if __name__ == "__main__":
-    main()
+    except Exception as e:
+        st.error(f"An error occurred during execution: {str(e)}")

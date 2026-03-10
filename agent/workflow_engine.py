@@ -60,6 +60,8 @@ class WorkflowEngine:
         顺次执行所有节点，维护共享状态和事件日志
         返回每个节点的结果状态
         """
+        self.events = []
+        self._results = {}
         self._shared_state = initial_state or {}
         
         for node in self.nodes:

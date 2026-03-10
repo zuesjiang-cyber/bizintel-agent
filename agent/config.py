@@ -3,8 +3,9 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    openai_api_key: str
-    openai_model: str = "gpt-4o"
+    openai_api_key: str = ""
+    openai_api_base: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
+    openai_model: str = "gemini-2.5-flash" # the gemini model name
     search_api_key: str = ""
 
     data_dir: Path = Path("data")

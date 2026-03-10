@@ -8,7 +8,6 @@
 - 集成验证结果
 """
 
-import json
 from datetime import datetime
 from typing import Any, Dict, List
 
@@ -29,9 +28,14 @@ from verification.evidence_verifier import EvidenceVerifier
 
 class ReportWriter:
     def __init__(self):
-        self.client = OpenAI(api_key=settings.openai_api_key)
+        self.client = None
         self.claim_extractor = ClaimExtractor()
         self.verifier = EvidenceVerifier()
+        
+    def _get_client(self):
+        if self.client is None:
+            self.client = OpenAI(api_key=settings.openai_api_key, base_url=settings.openai_api_base)
+        return self.client
 
     def generate_memo(
         self,
@@ -71,8 +75,6 @@ class ReportWriter:
         all_content = "\n\n".join(
             f"### {s.title}\n{s.content}" for s in sections
         )
-        executive_summary = self._generate_executive_summary(all_content)
-
         # 4. 组装 memo
         memo = GeneratedMemo(
             title=self._generate_title(plan),
@@ -142,18 +144,30 @@ class ReportWriter:
         return filled
 
     def _generate_executive_summary(self, all_content: str) -> str:
-        prompt = EXECUTIVE_SUMMARY_PROMPT.format(all_sections=all_content[:3000])
+        enhanced_prompt = (
+            f"Based on the following analysis sections, generate a comprehensive Executive Summary.\n\n"
+            f"Constraints & Requirements:\n"
+            f"- Write 3-5 distinct paragraphs (approx 200-400 words total).\n"
+            f"- Cover these core aspects: Key Findings, Financial/Funding Highlights, Competitive Positioning, and Future Outlook/Risks.\n"
+            f"- Output MUST be written as a cohesive narrative summary, not just bullet points.\n\n"
+            f"Evidence text to summarize:\n{all_content[:4000]}"
+        )
 
-        response = self.client.chat.completions.create(
+        client = self._get_client()
+        response = client.chat.completions.create(
             model=settings.openai_model,
             messages=[
                 {"role": "system", "content": MEMO_SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
+                {"role": "user", "content": enhanced_prompt},
             ],
-            max_tokens=300,
+            max_tokens=800,
             temperature=0.2,
         )
-        return response.choices[0].message.content.strip()
+        summary = response.choices[0].message.content.strip()
+        # Fallback if the model stops generating mid-sentence
+        if not summary.endswith((".", "!", "?")):
+            summary += "..."
+        return summary
 
     def _generate_title(self, plan: AnalysisPlan) -> str:
         mode_labels = {
@@ -167,15 +181,20 @@ class ReportWriter:
     def _format_sources(self, sources: List[DocumentMeta]) -> str:
         lines = []
         for i, source in enumerate(sources, 1):
-            line = f"[{source.source_id}] {source.title}"
+            title = source.title
+            # Completely strip any \n literals or actual newlines that might be in the title
+            title = title.replace("\\n", " ").replace("\n", " ")
+            title = " ".join(title.split()) # compress multiple spaces
+            
+            line = f"- **[{source.source_id}]** {title}"
             if source.url:
-                line += f" — {source.url}"
-            if source.date:
-                line += f" ({source.date})"
+                line += f" — [Link]({source.url})"
             lines.append(line)
         return "\n".join(lines)
 
     def _format_verification_summary(self, memo: GeneratedMemo) -> str:
+        from agent.schemas import ConfidenceLevel
+        
         all_results = []
         for section in memo.sections:
             all_results.extend(section.verification_results)
@@ -184,15 +203,28 @@ class ReportWriter:
             return "No claims verified."
 
         stats = self.verifier.summary_stats(all_results)
-        return (
+        
+        summary_text = (
             f"- Total claims analyzed: {stats['total_claims']}\n"
             f"- Strong support: {stats['strong']}\n"
             f"- Moderate support: {stats['moderate']}\n"
             f"- Weak support: {stats['weak']}\n"
             f"- Unsupported: {stats['unsupported']}\n"
             f"- Citation coverage: {stats['citation_coverage']:.0%}\n"
-            f"- Average NLI score: {stats['avg_nli_score']:.2f}"
+            f"- Average NLI score: {stats['avg_nli_score']:.2f}\n"
         )
+        
+        # specific weak/unsupported claims listing
+        flagged_claims = [r for r in all_results if r.confidence in [ConfidenceLevel.WEAK, ConfidenceLevel.UNSUPPORTED]]
+        
+        if flagged_claims:
+            summary_text += "\n### ⚠️ Flagged Claims (Weak / Unsupported)\n"
+            for r in flagged_claims:
+                reason = "No matching evidence" if r.confidence == ConfidenceLevel.UNSUPPORTED else "Evidence contradicts or weakly supports"
+                summary_text += f"- **Claim:** \"{r.claim.text}\"\n"
+                summary_text += f"  - *Score:* {r.score:.2f} ({r.confidence.value}) — {reason}\n"
+
+        return summary_text
 
     def _format_section_title(self, name: str) -> str:
         return name.replace("_", " ").title()

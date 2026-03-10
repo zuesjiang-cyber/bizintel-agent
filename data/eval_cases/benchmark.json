@@ -1,0 +1,25 @@
+[
+    {
+        "query": "Who are the founders of Stripe?",
+        "expected_mode": "COMPANY",
+        "required_facts": [
+            "Patrick Collison",
+            "John Collison",
+            "2010"
+        ]
+    },
+    {
+        "query": "What is Stripe's total funding?",
+        "expected_mode": "COMPANY",
+        "required_facts": [
+            "8.7",
+            "Billion",
+            "6.5"
+        ]
+    },
+    {
+        "query": "How is Notion related to the cloud computing market?",
+        "expected_mode": "COMPANY",
+        "required_facts": []
+    }
+]

@@ -10,9 +10,65 @@
   {
     "source_id": "stripe_about",
     "source_type": "webpage",
-    "title": "about",
-    "url": "https://stripe.com/about\\nDate: 2025-01-XX\\nTitle: Stripe About\\n\\nStripe is a financial infrastructure platform for the internet. Millions of companies\u2014from the world\u2019s largest enterprises to the most ambitious startups\u2014use Stripe to accept payments, grow their revenue, and accelerate new business opportunities. Headquartered in San Francisco and Dublin, the company aims to increase the GDP of the internet.",
+    "title": "Stripe About",
+    "url": "https://stripe.com/about",
     "date": null,
     "company": "stripe"
+  },
+  {
+    "source_id": "stripe_competitors",
+    "source_type": "competitive",
+    "title": "Competitive Landscape in Digital Payments: Stripe vs Adyen vs PayPal",
+    "url": "https://industry-analytics.com/payments-2024",
+    "date": "2024-01-15",
+    "company": "stripe"
+  },
+  {
+    "source_id": "stripe_funding",
+    "source_type": "funding",
+    "title": "Stripe Funding and Valuation History (2010-2023)",
+    "url": "https://stripe.com/newsroom/news/stripe-series-i",
+    "date": "2023-03-15",
+    "company": "stripe"
+  },
+  {
+    "source_id": "payments_industry",
+    "source_type": "other",
+    "title": "Global Digital Payments Industry Trends: 2024-2030",
+    "url": "https://market-research.com/digital-payments-2030",
+    "date": "2024-02-05",
+    "company": "stripe"
+  },
+  {
+    "source_id": "stripe_revenue",
+    "source_type": "financial",
+    "title": "Stripe Financial Metrics and Payment Volume 2023-2024",
+    "url": "https://stripe.com/annual-updates/2023",
+    "date": "2024-02-28",
+    "company": "stripe"
+  },
+  {
+    "source_id": "stripe_revenue_quality",
+    "source_type": "financial",
+    "title": "Stripe Revenue Quality and Monetization Watchpoints",
+    "url": "https://local-demo/stripe-revenue-quality",
+    "date": "2024-06-01",
+    "company": "Stripe"
+  },
+  {
+    "source_id": "stripe_risks",
+    "source_type": "risk",
+    "title": "Stripe Growth Headwinds and Strategic Risks 2024",
+    "url": "https://fintech-insider.com/stripe-risks-2024",
+    "date": "2024-05-10",
+    "company": "stripe"
+  },
+  {
+    "source_id": "stripe_valuation_monitorables",
+    "source_type": "analysis",
+    "title": "Stripe Valuation Context and Key Monitorables",
+    "url": "https://local-demo/stripe-valuation-monitorables",
+    "date": "2024-06-01",
+    "company": "Stripe"
   }
 ]

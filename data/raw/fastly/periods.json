@@ -1,0 +1,8 @@
+{
+  "company": "fastly",
+  "available_periods": ["2025Q2", "2025Q3", "2025Q4", "2025FY"],
+  "context_periods": ["company_context"],
+  "latest_period": "2025Q4",
+  "comparison_period": "2025Q3",
+  "fiscal_year_end": "12-31"
+}

@@ -1,0 +1,8 @@
+{
+    "source_id": "stripe_revenue_quality",
+    "title": "Stripe Revenue Quality and Monetization Watchpoints",
+    "source_url": "https://local-demo/stripe-revenue-quality",
+    "date": "2024-06-01",
+    "company": "Stripe",
+    "content": "Observation: Stripe's payment scale is impressive, but total payment volume and gross revenue are not the same as durable economics. Net revenue is materially lower after network and banking pass-through costs, so investors should focus on conversion from volume into retained revenue.\n\nObservation: Stripe's standard pricing can support attractive monetization on smaller and mid-market internet businesses, but larger enterprise accounts have more negotiating leverage. Implication: mix shift can help or hurt revenue quality depending on whether enterprise wins come with software attach or simply lower take rates.\n\nObservation: adjacent products such as Billing, Connect, Treasury, and Tax are strategically important because they can raise switching costs and diversify monetization away from pure payment acceptance. Watch items: attach rates, cross-sell penetration, and whether software-layer adoption offsets pricing pressure in core payments.\n\nBottom line: the key revenue-quality question is not just whether Stripe grows payment volume, but whether it sustains monetization and margin quality as it moves upmarket."
+}

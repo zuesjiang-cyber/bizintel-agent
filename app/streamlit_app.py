@@ -1,13 +1,20 @@
 import streamlit as st
 import pandas as pd
+import json
+
+from agent.artifacts import (
+    build_trace_payload,
+    build_verification_rows,
+    verification_rows_to_csv,
+)
 from agent.schemas import AnalysisMode, ConfidenceLevel
 from agent.orchestrator import BizIntelAgent
 
 # Configuration and Title
-st.set_page_config(page_title="BizIntel Agent", page_icon="📈", layout="wide")
+st.set_page_config(page_title="证据驱动可验证的企业财务研究Agent Flow", page_icon="📈", layout="wide")
 
-st.title("📈 BizIntel Agent")
-st.markdown("An automated business intelligence research and hallucination-free report generation system.")
+st.title("📈 证据驱动可验证的企业财务研究Agent Flow")
+st.markdown("An automated business intelligence research and citation-aware memo generation system for commercial analysis, strategy, and investment workflows.")
 
 # Sidebar Configuration
 with st.sidebar:
@@ -16,6 +23,7 @@ with st.sidebar:
     preset_queries = [
         "Select a preset query...",
         "Analyze Stripe in depth",
+        "Assess Stripe's revenue quality, valuation drivers, and key monitorables",
         "Compare Stripe vs PayPal",
         "Global digital payments industry trends and outlook"
     ]
@@ -38,6 +46,7 @@ with st.sidebar:
     }
     
     selected_mode = st.selectbox("Force Analysis Mode", list(mode_mapping.keys()))
+    demo_mode = st.checkbox("Demo mode (offline / no API key)", value=False)
     
     start_btn = st.button("🚀 Start Analysis", use_container_width=True, type="primary")
 
@@ -55,35 +64,70 @@ if start_btn and query:
     st.divider()
     
     # Progress indication
-    progress_text = "Initializing BizIntel Orchestrator..."
+    progress_text = "Initializing research orchestrator..."
     my_bar = st.progress(0, text=progress_text)
     
     try:
         my_bar.progress(10, text="Agent Planning: Generating Query Graph...")
-        agent = BizIntelAgent()
+        agent = BizIntelAgent(load_models=not demo_mode, demo_mode=demo_mode)
         
         my_bar.progress(30, text="Executing Retrieval & LLM Synthesis...")
         mode_enum = mode_mapping[selected_mode]
         with st.spinner('Running multi-step hybrid retrieval and analysis pipeline... This may take up to a minute.'):
             # Run the agent
-            memo = agent.research(query=query, mode=mode_enum)
-        
+            result = agent.research(query=query, mode=mode_enum)
+
         my_bar.progress(80, text="Running NLI Fact Verification...")
         # (This is logically bundled inside agent.research, but we simulate progress for UX)
-        
+
         my_bar.progress(100, text="Report Generation Complete!")
-        
+
+        memo = result["memo_object"]
+        plan = result["plan"]
+        workflow_events = result["workflow_events"]
+        verification_rows = build_verification_rows(memo)
+        trace_payload = build_trace_payload(result)
+
         # UI DISPLAY
         st.header(f"Results: {memo.title}")
-        st.caption(f"Generated on: {memo.generated_at[:16]} | Base Mode: {memo.mode.value} | System Confidence: {memo.overall_confidence:.0%}")
-        
+        confidence_label = "Offline Demo Heuristic Support" if demo_mode else "Verified Support"
+        st.caption(
+            f"Generated on: {memo.generated_at[:16]} | Base Mode: {memo.mode.value} | "
+            f"{confidence_label}: {memo.overall_confidence:.0%}"
+        )
+        if demo_mode:
+            st.info(
+                "Offline demo mode uses deterministic stub summarization and a lightweight heuristic verifier. "
+                "Treat these support metrics as walkthrough aids, not analyst-grade confidence scores."
+            )
+
+        st.subheader("Export Artifacts")
+        export_cols = st.columns(3)
+        export_cols[0].download_button(
+            "Download Memo (.md)",
+            data=result["memo_markdown"],
+            file_name="bizintel-memo.md",
+            mime="text/markdown",
+            use_container_width=True,
+        )
+        export_cols[1].download_button(
+            "Download Trace (.json)",
+            data=json.dumps(trace_payload, indent=2, ensure_ascii=False),
+            file_name="bizintel-trace.json",
+            mime="application/json",
+            use_container_width=True,
+        )
+        export_cols[2].download_button(
+            "Download Audit (.csv)",
+            data=verification_rows_to_csv(verification_rows),
+            file_name="bizintel-verification.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+
         st.subheader("Executive Summary")
         with st.container(border=True):
-            # Render executive summary correctly by picking the generated text snippet from writer.
-            # We will use the report_writer to re-render just the exec summary if we want, or do it inline.
-            all_content = "\\n\\n".join(s.content for s in memo.sections)
-            exec_summary = agent.report_writer._generate_executive_summary(all_content)
-            st.markdown(exec_summary)
+            st.markdown(memo.executive_summary)
 
         st.subheader("Analysis Breakdown")
         for section in memo.sections:
@@ -91,32 +135,40 @@ if start_btn and query:
             # Expanders
             with st.expander(f"📖 {title_clean}", expanded=False):
                 st.markdown(section.content)
+
+        st.subheader("Agent Plan & Workflow")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("#### Planned Steps")
+            st.write([step.name for step in plan.steps])
+        with col2:
+            st.markdown("#### Workflow Events")
+            st.write([f"{event['node_name']}: {event['event_type']}" for event in workflow_events])
         
         # Verification Summary
         st.subheader("Verification & NLI Auditing")
-        all_results = []
-        for s in memo.sections:
-            all_results.extend(s.verification_results)
+        all_results = [result for section in memo.sections for result in section.verification_results]
             
         if all_results:
             stats = agent.report_writer.verifier.summary_stats(all_results)
             
             col1, col2, col3, col4 = st.columns(4)
             col1.metric("Total Claims Extracted", stats["total_claims"])
-            col2.metric("Citation Coverage", f"{stats['citation_coverage']:.0%}")
-            col3.metric("Avg NLI Entailment", f"{stats['avg_nli_score']:.2f}")
+            col2.metric("Heuristic Support" if demo_mode else "Verified Claim Coverage", f"{stats['verified_claim_coverage']:.0%}")
+            col3.metric("Avg Heuristic Score" if demo_mode else "Avg NLI Entailment", f"{stats['avg_nli_score']:.2f}")
             col4.metric("Unsupported Claims", stats["unsupported"])
             
             # DataFrame for claims
             st.markdown("#### Claim Validation Details")
             claim_data = []
-            for r in all_results:
-                icon = get_confidence_color(r.confidence)
+            for row, verification in zip(verification_rows, all_results):
+                icon = get_confidence_color(verification.confidence)
                 claim_data.append({
-                    "Status": f"{icon} {r.confidence.value.upper()}",
-                    "Claim Text": r.claim.text,
-                    "NLI Score": round(r.nli_score, 2),
-                    "Sources": ", ".join(r.claim.cited_sources)
+                    "Status": f"{icon} {verification.confidence.value.upper()}",
+                    "Section": row["section"].replace("_", " ").title(),
+                    "Claim Text": row["claim_text"],
+                    "NLI Score": round(verification.nli_score, 2),
+                    "Sources": row["cited_sources"],
                 })
             
             df = pd.DataFrame(claim_data)

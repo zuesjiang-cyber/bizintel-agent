@@ -1,0 +1,122 @@
+[
+  {
+    "source_id": "fastly_ir_overview",
+    "source_type": "ir_overview",
+    "title": "Fastly Investor Relations Overview",
+    "url": "https://investors.fastly.com/home/default.aspx",
+    "date": "2026-03-21",
+    "company": "fastly",
+    "period": "company_context",
+    "is_primary": true
+  },
+  {
+    "source_id": "fastly_2025_10k",
+    "source_type": "annual_report",
+    "title": "Fastly Form 10-K for fiscal year 2025",
+    "url": "https://www.sec.gov/Archives/edgar/data/1517413/000151741326000053/fsly-20251231.htm",
+    "date": "2026-02-25",
+    "company": "fastly",
+    "period": "2025FY",
+    "is_primary": true
+  },
+  {
+    "source_id": "fastly_q4_2025_results",
+    "source_type": "quarterly_results",
+    "title": "Fastly Announces Both Record Fourth Quarter and Full Year 2025 Financial Results",
+    "url": "https://investors.fastly.com/news/news-details/2026/Fastly-Announces-Both-Record-Fourth-Quarter-and-Full-Year-2025-Financial-Results/default.aspx",
+    "date": "2026-02-11",
+    "company": "fastly",
+    "period": "2025Q4",
+    "is_primary": true
+  },
+  {
+    "source_id": "fastly_q4_2025_investor_supplement",
+    "source_type": "investor_supplement",
+    "title": "Fastly Fourth Quarter 2025 Investor Supplement",
+    "url": "https://investors.fastly.com/files/doc_earnings/2025/q4/supplemental-info/Fastly-Fourth-Quarter-2025-Investor-Supplement.pdf",
+    "date": "2026-02-11",
+    "company": "fastly",
+    "period": "2025Q4",
+    "is_primary": true
+  },
+  {
+    "source_id": "fastly_q4_2025_investor_presentation",
+    "source_type": "investor_presentation",
+    "title": "Fastly Q4 2025 Investor Presentation",
+    "url": "https://investors.fastly.com/files/doc_earnings/2025/q4/presentation/q4-investor-presentation.pdf",
+    "date": "2026-02-11",
+    "company": "fastly",
+    "period": "2025Q4",
+    "is_primary": true
+  },
+  {
+    "source_id": "fastly_q4_2025_transcript",
+    "source_type": "earnings_call_transcript",
+    "title": "Fastly Q4 2025 Earnings Call Transcript",
+    "url": "https://investors.fastly.com/files/doc_earnings/2025/q4/transcript/Fastly-Inc-Q4-2025-Earnings-Call.pdf",
+    "date": "2026-02-11",
+    "company": "fastly",
+    "period": "2025Q4",
+    "is_primary": true
+  },
+  {
+    "source_id": "fastly_q3_2025_results",
+    "source_type": "quarterly_results",
+    "title": "Fastly Announces Record Third Quarter 2025 Financial Results",
+    "url": "https://investors.fastly.com/news/news-details/2025/Fastly-Announces-Record-Third-Quarter-2025-Financial-Results/default.aspx",
+    "date": "2025-11-05",
+    "company": "fastly",
+    "period": "2025Q3",
+    "is_primary": true
+  },
+  {
+    "source_id": "fastly_q3_2025_investor_supplement",
+    "source_type": "investor_supplement",
+    "title": "Fastly Third Quarter 2025 Investor Supplement",
+    "url": "https://investors.fastly.com/files/doc_earnings/2025/q3/supplemental-info/Fastly-Third-Quarter-2025-Investor-Supplement.pdf",
+    "date": "2025-11-05",
+    "company": "fastly",
+    "period": "2025Q3",
+    "is_primary": true
+  },
+  {
+    "source_id": "fastly_q3_2025_transcript",
+    "source_type": "earnings_call_transcript",
+    "title": "Fastly Q3 2025 Earnings Call Transcript",
+    "url": "https://investors.fastly.com/files/doc_earnings/2025/q3/transcript/Fastly-Inc-Q3-2025-Earnings-Call.pdf",
+    "date": "2025-11-05",
+    "company": "fastly",
+    "period": "2025Q3",
+    "is_primary": true
+  },
+  {
+    "source_id": "fastly_q2_2025_results",
+    "source_type": "quarterly_results",
+    "title": "Fastly Announces Second Quarter 2025 Financial Results",
+    "url": "https://investors.fastly.com/news/news-details/2025/Fastly-Announces-Second-Quarter-2025-Financial-Results/",
+    "date": "2025-08-06",
+    "company": "fastly",
+    "period": "2025Q2",
+    "is_primary": true
+  },
+  {
+    "source_id": "fastly_q2_2025_investor_supplement",
+    "source_type": "investor_supplement",
+    "title": "Fastly Second Quarter 2025 Investor Supplement",
+    "url": "https://investors.fastly.com/files/doc_earnings/2025/q2/supplemental-info/Fastly-Second-Quarter-2025-Investor-Supplement.pdf",
+    "date": "2025-08-06",
+    "company": "fastly",
+    "period": "2025Q2",
+    "is_primary": true
+  },
+  {
+    "source_id": "fastly_q2_2025_transcript",
+    "source_type": "earnings_call_transcript",
+    "title": "Fastly Q2 2025 Earnings Call Transcript",
+    "url": "https://investors.fastly.com/files/doc_earnings/2025/q2/transcript/Fastly-Inc-Q2-2025-Earnings-Call.pdf",
+    "date": "2025-08-06",
+    "company": "fastly",
+    "period": "2025Q2",
+    "is_primary": true
+  }
+]

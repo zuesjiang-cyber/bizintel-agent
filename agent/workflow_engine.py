@@ -1,6 +1,7 @@
 import time
 import logging
-from typing import Callable, Dict, List, Any, Optional
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from typing import Callable, Dict, List, Any
 
 from agent.schemas import NodeResult, NodeStatus, WorkflowEvent
 
@@ -28,14 +29,22 @@ class WorkflowNode:
 
         for attempt in range(self.max_retries + 1):
             try:
-                # 实际执行
-                # TODO: 加 timeout 控制
-                output = self.executor(shared_state)
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    future = pool.submit(self.executor, shared_state)
+                    output = future.result(timeout=self.timeout_seconds)
                 
                 result.status = NodeStatus.SUCCESS
                 result.data = output
                 break
                 
+            except FuturesTimeoutError:
+                result.error = f"Node timed out after {self.timeout_seconds:.1f}s"
+                result.retry_count = attempt
+                logger.error(f"Timeout in node {self.name} (attempt {attempt+1})")
+
+                if attempt == self.max_retries:
+                    result.status = NodeStatus.FAILED
+
             except Exception as e:
                 logger.error(f"Error in node {self.name} (attempt {attempt+1}): {e}")
                 result.error = str(e)

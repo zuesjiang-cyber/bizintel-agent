@@ -8,7 +8,6 @@
 
 import argparse
 import json
-from pathlib import Path
 
 from agent.config import settings
 from retrieval.hybrid_retriever import HybridRetriever

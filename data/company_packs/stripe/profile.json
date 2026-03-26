@@ -7,7 +7,7 @@
         "John Collison"
     ],
     "employee_count": "~8,000",
-    "latest_valuation": "$50B (as of 2025 re-valuation)",
+    "latest_valuation": "$50B (March 2023 Series I round)",
     "total_funding": "$8.7B",
     "latest_round": "Series I, $6.5B, March 2023",
     "industry": "Fintech / Payments",
@@ -19,5 +19,15 @@
         "Stripe Treasury",
         "Stripe Tax"
     ],
-    "target_customers": "Internet businesses, SaaS companies, marketplaces, platforms"
+    "target_customers": "Internet businesses, SaaS companies, marketplaces, and enterprise platforms",
+    "core_revenue_model": "Transaction-driven payments revenue with enterprise custom pricing, plus software and financial-product attach opportunities across Billing, Connect, Treasury, and Tax.",
+    "core_customers": "Startups, digital-native software companies, marketplaces, and larger enterprises processing meaningful online payment volume.",
+    "key_monitorables": [
+        "Total payment volume growth",
+        "Enterprise customer expansion",
+        "Net revenue conversion versus gross payment volume",
+        "Adoption of Connect, Treasury, Billing, and Tax",
+        "Pricing pressure versus Adyen and Braintree"
+    ],
+    "memo_angle": "The key investment question is whether Stripe can turn its scale and product breadth into durable net revenue growth and stronger profitability while defending pricing."
 }

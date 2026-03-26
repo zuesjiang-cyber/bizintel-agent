@@ -1,6 +1,6 @@
-# BizIntel Agent: 完整技术文档 (Architecture & Technical Reference)
+# 证据驱动可验证的企业财务研究Agent Flow: 完整技术文档 (Architecture & Technical Reference)
 
-BizIntel Agent 是一个用于自动化商业智能与研究报告生成的 AI 系统。本文档详细说明了系统的整体架构、核心模块、数据流向以及主要数据结构。
+证据驱动可验证的企业财务研究Agent Flow 是一个用于自动化商业智能与研究报告生成的 AI 系统。本文档详细说明了系统的整体架构、核心模块、数据流向以及主要数据结构。
 
 ## 1. 系统架构概览 (System Architecture)
 

@@ -1,7 +1,15 @@
 .venv/
+venv/
 __pycache__/
 *.pyc
 .env
 *.egg-info/
 .ruff_cache/
+.pytest_cache/
 eval/results/*.json
+artifacts/
+.DS_Store
+.codex/
+AGENTS.md
+data/benchmark/v1/index/
+data/benchmark/v2/index/

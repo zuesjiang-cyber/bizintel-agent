@@ -1,0 +1,57 @@
+{
+  "profiles": {
+    "diagnostic_dev": {
+      "track": "diagnostic",
+      "purpose": "Failure-revealing development benchmark covering all major benchmark categories.",
+      "split": "dev"
+    },
+    "diagnostic_test": {
+      "track": "diagnostic",
+      "purpose": "Held-out diagnostic benchmark covering unseen items from the same frozen corpus.",
+      "split": "test"
+    },
+    "trust_showcase_v1": {
+      "track": "showcase",
+      "purpose": "Public-facing trust showcase using narrower, evidence-bound questions designed to favor direct citation binding over open-ended synthesis.",
+      "item_ids": [
+        "BO-002",
+        "NUM-001",
+        "TS-002",
+        "TS-003",
+        "SRC-001"
+      ],
+      "target_metrics": {
+        "verified_claim_coverage": {
+          "target": 0.828,
+          "direction": "at_least"
+        },
+        "unsupported_claim_rate": {
+          "target": 0.1225,
+          "direction": "at_most"
+        }
+      },
+      "question_constraints": {
+        "allowed_categories": [
+          "company_overview",
+          "time_sensitive",
+          "evidence_conflict"
+        ],
+        "allowed_difficulties": [
+          "medium"
+        ],
+        "allowed_query_types": [
+          "evidence_weighting",
+          "factual_lookup",
+          "management_commentary",
+          "numeric_grounding",
+          "period_diff",
+          "source_priority",
+          "structured_summary"
+        ],
+        "max_must_cover": 3,
+        "max_distinct_sources": 2,
+        "require_target_periods": true
+      }
+    }
+  }
+}

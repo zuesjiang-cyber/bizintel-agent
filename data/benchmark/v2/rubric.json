@@ -1,0 +1,30 @@
+{
+  "retrieval_hit": {
+    "description": "Whether the system retrieved at least one gold evidence document for the item.",
+    "scale": [0, 1]
+  },
+  "verified_claim_coverage": {
+    "description": "Fraction of extracted claims that the verifier judged supported by bound evidence.",
+    "scale": [0.0, 1.0]
+  },
+  "citation_marker_coverage": {
+    "description": "Fraction of extracted claims that include citation markers, regardless of whether support is verified.",
+    "scale": [0.0, 1.0]
+  },
+  "unsupported_claim_rate": {
+    "description": "Fraction of extracted claims judged unsupported by the verifier.",
+    "scale": [0.0, 1.0]
+  },
+  "required_fact_recall": {
+    "description": "Coverage of must-cover concepts or required facts in the answer.",
+    "scale": [0.0, 1.0]
+  },
+  "answer_quality": {
+    "description": "Holistic quality score for completeness, balance, and evidence use.",
+    "scale": [1, 5]
+  },
+  "failure_tags": {
+    "description": "Flat list of common failure labels such as missing_period_comparison or unsupported_financial_claim.",
+    "scale": []
+  }
+}

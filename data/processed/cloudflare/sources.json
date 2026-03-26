@@ -1,0 +1,122 @@
+[
+  {
+    "source_id": "cloudflare_ir_overview",
+    "source_type": "ir_overview",
+    "title": "Cloudflare Investor Relations Overview",
+    "url": "https://www.cloudflare.net/home/default.aspx",
+    "date": "2026-03-21",
+    "company": "cloudflare",
+    "period": "company_context",
+    "is_primary": true
+  },
+  {
+    "source_id": "cloudflare_2024_10k",
+    "source_type": "annual_report",
+    "title": "Cloudflare Form 10-K for fiscal year 2024",
+    "url": "https://www.sec.gov/Archives/edgar/data/1477333/000147733325000043/cloud-20241231.htm",
+    "date": "2025-02-20",
+    "company": "cloudflare",
+    "period": "2024FY",
+    "is_primary": true
+  },
+  {
+    "source_id": "cloudflare_q4_2025_results",
+    "source_type": "quarterly_results",
+    "title": "Cloudflare Announces Fourth Quarter and Fiscal Year 2025 Financial Results",
+    "url": "https://www.cloudflare.net/news/news-details/2026/Cloudflare-Announces-Fourth-Quarter-and-Fiscal-Year-2025-Financial-Results/default.aspx",
+    "date": "2026-02-10",
+    "company": "cloudflare",
+    "period": "2025Q4",
+    "is_primary": true
+  },
+  {
+    "source_id": "cloudflare_q4_2025_event_page",
+    "source_type": "event_page",
+    "title": "Cloudflare Q4'25 Earnings Event Page",
+    "url": "https://cloudflare.net/events-and-presentations/events-calendar/event-details/2026/Cloudflare-Q425-Earnings/default.aspx",
+    "date": "2026-02-10",
+    "company": "cloudflare",
+    "period": "2025Q4",
+    "is_primary": false
+  },
+  {
+    "source_id": "cloudflare_q4_2025_transcript",
+    "source_type": "earnings_call_transcript",
+    "title": "Cloudflare Q4 2025 Earnings Call Transcript",
+    "url": "https://cloudflare.net/files/doc_financials/2025/q4/CORRECTED-TRANSCRIPT-Cloudflare-Inc-NET-US-Q4-2025-Earnings-Call-10-February-2026-5-00-PM-ET.pdf",
+    "date": "2026-02-10",
+    "company": "cloudflare",
+    "period": "2025Q4",
+    "is_primary": true
+  },
+  {
+    "source_id": "cloudflare_q4_2025_results_exhibit_99_1",
+    "source_type": "quarterly_results",
+    "title": "Cloudflare Q4 2025 Exhibit 99.1",
+    "url": "https://cloudflare.net/files/doc_financials/2025/q4/Q4-25-Exhibit-99-1_FINAL.pdf",
+    "date": "2026-02-10",
+    "company": "cloudflare",
+    "period": "2025Q4",
+    "is_primary": true
+  },
+  {
+    "source_id": "cloudflare_q3_2025_results",
+    "source_type": "quarterly_results",
+    "title": "Cloudflare Announces Third Quarter 2025 Financial Results",
+    "url": "https://www.cloudflare.net/news/news-details/2025/Cloudflare-Announces-Third-Quarter-2025-Financial-Results/default.aspx",
+    "date": "2025-10-30",
+    "company": "cloudflare",
+    "period": "2025Q3",
+    "is_primary": true
+  },
+  {
+    "source_id": "cloudflare_q3_2025_transcript",
+    "source_type": "earnings_call_transcript",
+    "title": "Cloudflare Q3 2025 Earnings Call Transcript",
+    "url": "https://cloudflare.net/files/doc_financials/2025/q3/CORRECTED-TRANSCRIPT_-Cloudflare-Inc-NET-US-Q3-2025-Earnings-Call-30-October-2025-5_00-PM-ET.pdf",
+    "date": "2025-10-30",
+    "company": "cloudflare",
+    "period": "2025Q3",
+    "is_primary": true
+  },
+  {
+    "source_id": "cloudflare_q2_2025_results",
+    "source_type": "quarterly_results",
+    "title": "Cloudflare Announces Second Quarter 2025 Financial Results",
+    "url": "https://www.cloudflare.net/news/news-details/2025/Cloudflare-Announces-Second-Quarter-2025-Financial-Results/default.aspx",
+    "date": "2025-07-31",
+    "company": "cloudflare",
+    "period": "2025Q2",
+    "is_primary": true
+  },
+  {
+    "source_id": "cloudflare_q2_2025_transcript",
+    "source_type": "earnings_call_transcript",
+    "title": "Cloudflare Q2 2025 Earnings Call Transcript",
+    "url": "https://www.cloudflare.net/files/doc_financials/2025/q2/CORRECTED-TRANSCRIPT_-Cloudflare-Inc-NET-US-Q2-2025-Earnin.pdf",
+    "date": "2025-07-31",
+    "company": "cloudflare",
+    "period": "2025Q2",
+    "is_primary": true
+  },
+  {
+    "source_id": "cloudflare_2025_proxy",
+    "source_type": "proxy_statement",
+    "title": "Cloudflare 2025 Proxy Statement",
+    "url": "https://www.sec.gov/Archives/edgar/data/1477333/000147733325000065/cloud-20250418.htm",
+    "date": "2025-04-21",
+    "company": "cloudflare",
+    "period": "2025AGM",
+    "is_primary": true
+  },
+  {
+    "source_id": "cloudflare_2025_investor_day_presentation",
+    "source_type": "investor_presentation",
+    "title": "Cloudflare 2025 Investor Day Presentation",
+    "url": "https://cloudflare.net/files/doc_downloads/Presentations/2025/03/Cloudflare-2025-Investor-Day-Presentation.pdf",
+    "date": "2025-03-12",
+    "company": "cloudflare",
+    "period": "strategy_context",
+    "is_primary": true
+  }
+]

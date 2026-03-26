@@ -1,0 +1,183 @@
+{
+  "version": "v2",
+  "companies": [
+    {
+      "company": "cloudflare",
+      "manifest_sha256": "8bc608fd81ca53bc5fe7b53c09325488e77e05a4906b9a6c1c2c4598cecc2d26",
+      "periods_sha256": "55f406130ee2ec65771566d59bab507ac6ae20ec87ef5a60e596d654d62359a5",
+      "receipts_sha256": "dc685fb9344314b1c8e90d9f7644ca0554531ec87199b85e9ae2577bbce2dd37",
+      "document_count": 12,
+      "missing_document_count": 0,
+      "documents": [
+        {
+          "doc_id": "cloudflare_2024_10k",
+          "path": "data/raw/cloudflare/docs/cloudflare_2024_10k.html",
+          "sha256": "994593f3f865c46a525941c44dafcb9584e5335de07b8259395662b0a46f7b35",
+          "bytes": 2506920
+        },
+        {
+          "doc_id": "cloudflare_2025_investor_day_presentation",
+          "path": "data/raw/cloudflare/docs/cloudflare_2025_investor_day_presentation.pdf",
+          "sha256": "7015b05d7db519757ff717b8d36d89c28b578ee79b16ee0f5a441df4780370fc",
+          "bytes": 22854662
+        },
+        {
+          "doc_id": "cloudflare_2025_proxy",
+          "path": "data/raw/cloudflare/docs/cloudflare_2025_proxy.html",
+          "sha256": "2b52aceafb3d29f3de75ab85b591651eafb6383472225efdea13970eb418ea6d",
+          "bytes": 961010
+        },
+        {
+          "doc_id": "cloudflare_ir_overview",
+          "path": "data/raw/cloudflare/docs/cloudflare_ir_overview.html",
+          "sha256": "0295096fe7bf95602f3e4c1f37c65fc578f60ea21d03c1c8e8b479b1b0e3cc82",
+          "bytes": 65716
+        },
+        {
+          "doc_id": "cloudflare_q2_2025_results",
+          "path": "data/raw/cloudflare/docs/cloudflare_q2_2025_results.html",
+          "sha256": "2984dd838629f5de58db2d2e6be38f9e6b08683336f5859b5f4dfdd780efbe6c",
+          "bytes": 445803
+        },
+        {
+          "doc_id": "cloudflare_q2_2025_transcript",
+          "path": "data/raw/cloudflare/docs/cloudflare_q2_2025_transcript.pdf",
+          "sha256": "8f1292ab995fbe52c51ba8704b01fde3b9bfc080d3cd6504667f7144751b379b",
+          "bytes": 308755
+        },
+        {
+          "doc_id": "cloudflare_q3_2025_results",
+          "path": "data/raw/cloudflare/docs/cloudflare_q3_2025_results.html",
+          "sha256": "e58465b1c279deff66b99bdf49162a098664a497fe04bff4dda0ba5767e81793",
+          "bytes": 598133
+        },
+        {
+          "doc_id": "cloudflare_q3_2025_transcript",
+          "path": "data/raw/cloudflare/docs/cloudflare_q3_2025_transcript.pdf",
+          "sha256": "3f1430eb0f687cd4802fa236b0559b1a98f8f6a4a61bb2698fa7f331979546b3",
+          "bytes": 314352
+        },
+        {
+          "doc_id": "cloudflare_q4_2025_event_page",
+          "path": "data/raw/cloudflare/docs/cloudflare_q4_2025_event_page.html",
+          "sha256": "9d437f85fd6a21cf89a24373847d20fc23a86da07a4e0afeb73925e43ce15a93",
+          "bytes": 59673
+        },
+        {
+          "doc_id": "cloudflare_q4_2025_results",
+          "path": "data/raw/cloudflare/docs/cloudflare_q4_2025_results.html",
+          "sha256": "3560ab631358c31ae45bc2fb3e9f5642c0a6755999d0ab8a3cf4c8aff376804b",
+          "bytes": 466472
+        },
+        {
+          "doc_id": "cloudflare_q4_2025_results_exhibit_99_1",
+          "path": "data/raw/cloudflare/docs/cloudflare_q4_2025_results_exhibit_99_1.pdf",
+          "sha256": "fa98abee71ba4736c05bea5d7e60099221f4f83197cddd86d947aadb9a31e021",
+          "bytes": 241801
+        },
+        {
+          "doc_id": "cloudflare_q4_2025_transcript",
+          "path": "data/raw/cloudflare/docs/cloudflare_q4_2025_transcript.pdf",
+          "sha256": "dec4437c6101fe7b1b80290a0bdf11c24f1711a548f322c34124695044fc6ee0",
+          "bytes": 306759
+        }
+      ],
+      "missing_documents": []
+    },
+    {
+      "company": "fastly",
+      "manifest_sha256": "275e8dd2db845e9308c8027526008d0df3a33ceb0c3abb97811c612faf3307f8",
+      "periods_sha256": "23242445f528c7b0c3ac6da64b95800a10a9ea293f06041f3bbcccb83136c59a",
+      "receipts_sha256": "690e4a97010d74491801e7cd5840b12c88251e47f0ce93ecb6f9538f67021b50",
+      "document_count": 12,
+      "missing_document_count": 2,
+      "documents": [
+        {
+          "doc_id": "fastly_2025_10k",
+          "path": "data/raw/fastly/docs/fastly_2025_10k.html",
+          "sha256": "5960dc2a17b281dc4222000f10538facacd4fadd1c2f5ae35eb8c61597532320",
+          "bytes": 2349611
+        },
+        {
+          "doc_id": "fastly_ir_overview",
+          "path": "data/raw/fastly/docs/fastly_ir_overview.html",
+          "sha256": "ae6996b7ca7523915dc30f7405e80e568fa665af9765ba369aa63100ddcd820b",
+          "bytes": 83890
+        },
+        {
+          "doc_id": "fastly_q2_2025_investor_supplement",
+          "path": "data/raw/fastly/docs/fastly_q2_2025_investor_supplement.pdf",
+          "sha256": "649a40c10d8e341963eaa6273278f6c52c37d23ef3c8b43c3ea44dba0fedcf09",
+          "bytes": 365388
+        },
+        {
+          "doc_id": "fastly_q2_2025_results",
+          "path": "data/raw/fastly/docs/fastly_q2_2025_results.html",
+          "sha256": "40b858880783006110600178e955159d5fd5657f879cd8fa24cd63fc93b55126",
+          "bytes": 467068
+        },
+        {
+          "doc_id": "fastly_q2_2025_transcript",
+          "path": "data/raw/fastly/docs/fastly_q2_2025_transcript.pdf",
+          "sha256": "b23cea1872c4272aba39458b8a75b564e40ba04f8ed50a51b42076f996142443",
+          "bytes": 287606
+        },
+        {
+          "doc_id": "fastly_q3_2025_investor_supplement",
+          "path": "data/raw/fastly/docs/fastly_q3_2025_investor_supplement.pdf",
+          "sha256": "8beceab97ac0665c4a626b4d9076d9fd353e7c41d26a876f8f883a78ae39da2e",
+          "bytes": 371773
+        },
+        {
+          "doc_id": "fastly_q3_2025_results",
+          "path": "data/raw/fastly/docs/fastly_q3_2025_results.html",
+          "sha256": "3b975205cbf9d800648bd64950f1bd07044856698385fa1eb323af1457cce54d",
+          "bytes": 482015
+        },
+        {
+          "doc_id": "fastly_q3_2025_transcript",
+          "path": "data/raw/fastly/docs/fastly_q3_2025_transcript.pdf",
+          "sha256": "cf085123b2ae2949fa426ef00d648b7fe49e983117d92dad7ade9ad1033fecf4",
+          "bytes": 280615
+        },
+        {
+          "doc_id": "fastly_q4_2025_investor_presentation",
+          "path": "data/raw/fastly/docs/fastly_q4_2025_investor_presentation.pdf",
+          "sha256": "be2c14fffabdde200e9c6af2e3f088d24dbe1cbd4b6e5778a760d16aa325e982",
+          "bytes": 6075927
+        },
+        {
+          "doc_id": "fastly_q4_2025_investor_supplement",
+          "path": "data/raw/fastly/docs/fastly_q4_2025_investor_supplement.pdf",
+          "sha256": "9be52560759a559448996ebfb1ac914419aa7e2b6bf3901e44a108e49790d442",
+          "bytes": 368803
+        },
+        {
+          "doc_id": "fastly_q4_2025_results",
+          "path": "data/raw/fastly/docs/fastly_q4_2025_results.html",
+          "sha256": "b3c4c0275efabc3d8a5ca21fedbb3900ad3eea90de40d6a936552493cc31ee04",
+          "bytes": 503410
+        },
+        {
+          "doc_id": "fastly_q4_2025_transcript",
+          "path": "data/raw/fastly/docs/fastly_q4_2025_transcript.pdf",
+          "sha256": "14215a626df89e98d8a5e679c85e160a6039660a3e0c34ca2080a18db7c3c4a1",
+          "bytes": 315876
+        }
+      ],
+      "missing_documents": [
+        {
+          "doc_id": "fastly_2025_q3_10q",
+          "path": "data/raw/fastly/docs/fastly_2025_q3_10q.html",
+          "is_primary": true
+        },
+        {
+          "doc_id": "fastly_q4_2025_event_page",
+          "path": "data/raw/fastly/docs/fastly_q4_2025_event_page.html",
+          "is_primary": false
+        }
+      ]
+    }
+  ],
+  "snapshot_id": "d2a26985dd7e3630873716152085d069f9fe2575c823d710178d371395050826"
+}

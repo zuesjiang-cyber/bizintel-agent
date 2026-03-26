@@ -23,9 +23,18 @@ except ImportError:  # Allows offline tests with dummy models
     CrossEncoder = None
     SentenceTransformer = None
 
+try:
+    import torch
+except ImportError:  # pragma: no cover - exercised in lightweight environments
+    torch = None
+
+from agent.config import settings
 from agent.schemas import RetrievedChunk
 
 logger = logging.getLogger(__name__)
+_ENCODER_CACHE: Dict[Tuple[str, str], object] = {}
+_RERANKER_CACHE: Dict[Tuple[str, str], object] = {}
+SearchHit = Tuple[int, int, float]
 
 
 class _DummyEncoder:
@@ -61,6 +70,33 @@ class _DummyReranker:
         return np.array(scores, dtype=float)
 
 
+def _resolve_inference_device() -> str:
+    configured = (settings.inference_device or "auto").strip().lower()
+    if configured != "auto":
+        return configured
+    if torch is not None and torch.cuda.is_available():
+        return "cuda"
+    if torch is not None and getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
+def _load_shared_encoder(model_name: str, device: str):
+    cache_key = (model_name, device)
+    if cache_key not in _ENCODER_CACHE:
+        logger.info("Loading embedding model on %s...", device)
+        _ENCODER_CACHE[cache_key] = SentenceTransformer(model_name, device=device)
+    return _ENCODER_CACHE[cache_key]
+
+
+def _load_shared_reranker(model_name: str, device: str):
+    cache_key = (model_name, device)
+    if cache_key not in _RERANKER_CACHE:
+        logger.info("Loading reranker model on %s...", device)
+        _RERANKER_CACHE[cache_key] = CrossEncoder(model_name, device=device)
+    return _RERANKER_CACHE[cache_key]
+
+
 class HybridRetriever:
     def __init__(
         self,
@@ -73,13 +109,19 @@ class HybridRetriever:
         reranker=None,
         load_models: bool = True,
     ):
+        self.device = _resolve_inference_device()
+        self.embedding_model_name = embedding_model
+        self.reranker_model_name = reranker_model
         if encoder is not None:
             self.encoder = encoder
         elif load_models:
             if SentenceTransformer is None:
                 raise ImportError("sentence-transformers is required to load embedding models.")
-            logger.info("Loading embedding model...")
-            self.encoder = SentenceTransformer(embedding_model)
+            try:
+                self.encoder = _load_shared_encoder(embedding_model, self.device)
+            except Exception as exc:
+                logger.warning("Falling back to dummy embedding encoder because model loading failed: %s", exc)
+                self.encoder = _DummyEncoder()
         else:
             self.encoder = _DummyEncoder()
 
@@ -88,8 +130,11 @@ class HybridRetriever:
         elif load_models:
             if CrossEncoder is None:
                 raise ImportError("sentence-transformers is required to load reranker models.")
-            logger.info("Loading reranker model...")
-            self.reranker = CrossEncoder(reranker_model)
+            try:
+                self.reranker = _load_shared_reranker(reranker_model, self.device)
+            except Exception as exc:
+                logger.warning("Falling back to dummy reranker because model loading failed: %s", exc)
+                self.reranker = _DummyReranker()
         else:
             self.reranker = _DummyReranker()
 
@@ -138,6 +183,23 @@ class HybridRetriever:
         rerank_top_n: int = 20,
         mode: str = "full_hybrid"
     ) -> List[RetrievedChunk]:
+        results, _ = self.retrieve_with_trace(
+            query,
+            top_k=top_k,
+            candidate_pool_size=candidate_pool_size,
+            rerank_top_n=rerank_top_n,
+            mode=mode,
+        )
+        return results
+
+    def retrieve_with_trace(
+        self,
+        query: str,
+        top_k: int = 10,
+        candidate_pool_size: int = 50,
+        rerank_top_n: int = 20,
+        mode: str = "full_hybrid"
+    ) -> tuple[List[RetrievedChunk], dict]:
         """
         检索模式：
         - bm25_only: 只用 BM25
@@ -153,30 +215,49 @@ class HybridRetriever:
         bm25_results = self._bm25_search(query, top_k=candidate_pool_size)
         dense_results = self._dense_search(query, top_k=candidate_pool_size)
 
-        self._last_bm25_ranks = {idx: rank for idx, rank in bm25_results}
-        self._last_dense_ranks = {idx: rank for idx, rank in dense_results}
+        self._last_bm25_ranks = {idx: rank for idx, rank, _ in bm25_results}
+        self._last_dense_ranks = {idx: rank for idx, rank, _ in dense_results}
+        trace = {
+            "query": query,
+            "mode": mode,
+            "candidate_pool_size": candidate_pool_size,
+            "rerank_top_n": rerank_top_n,
+            "bm25_candidates": self._trace_candidates(bm25_results),
+            "dense_candidates": self._trace_candidates(dense_results),
+        }
 
         if mode == "bm25_only":
-            candidates = [idx for idx, _ in sorted(bm25_results, key=lambda x: x[1])][:top_k]
-            return self._build_results_no_rerank(candidates, score_map={i: float(1.0/(r+1)) for i,r in bm25_results})
+            candidates = [idx for idx, _, _ in sorted(bm25_results, key=lambda x: x[1])][:top_k]
+            results = self._build_results_no_rerank(candidates, score_map={i: float(1.0/(r+1)) for i, r, _ in bm25_results})
+            trace["final_results"] = self._serialize_results(results)
+            return results, trace
 
         elif mode == "dense_only":
-            candidates = [idx for idx, _ in sorted(dense_results, key=lambda x: x[1])][:top_k]
-            return self._build_results_no_rerank(candidates, score_map={i: float(1.0/(r+1)) for i,r in dense_results})
+            candidates = [idx for idx, _, _ in sorted(dense_results, key=lambda x: x[1])][:top_k]
+            results = self._build_results_no_rerank(candidates, score_map={i: float(1.0/(r+1)) for i, r, _ in dense_results})
+            trace["final_results"] = self._serialize_results(results)
+            return results, trace
 
         fused_indices = self._reciprocal_rank_fusion(bm25_results, dense_results)
+        trace["fused_candidates"] = self._trace_indices(fused_indices)
 
         if mode == "hybrid_no_rerank":
             candidates = fused_indices[:top_k]
             # mock scores using reciprocal rank position
             score_map = {idx: float(1.0/(i+1)) for i, idx in enumerate(candidates)}
-            return self._build_results_no_rerank(candidates, score_map=score_map)
+            results = self._build_results_no_rerank(candidates, score_map=score_map)
+            trace["final_results"] = self._serialize_results(results)
+            return results, trace
 
         # mode == "full_hybrid"
         candidates = fused_indices[:rerank_top_n]
+        trace["rerank_input"] = self._trace_indices(candidates)
         reranked = self._rerank(query, candidates)
+        trace["rerank_output"] = self._serialize_results(reranked)
 
-        return reranked[:top_k]
+        final_results = reranked[:top_k]
+        trace["final_results"] = self._serialize_results(final_results)
+        return final_results, trace
 
     def _build_results_no_rerank(self, indices: List[int], score_map: Dict[int, float]) -> List[RetrievedChunk]:
         results = []
@@ -194,26 +275,26 @@ class HybridRetriever:
             ))
         return results
 
-    def _bm25_search(self, query: str, top_k: int) -> List[Tuple[int, int]]:
+    def _bm25_search(self, query: str, top_k: int) -> List[SearchHit]:
         """BM25 检索，返回 [(chunk_index, rank), ...]"""
         tokens = self._tokenize(query)
         scores = self._bm25_index.get_scores(tokens)
         top_indices = np.argsort(scores)[::-1][:top_k]
-        return [(int(idx), rank) for rank, idx in enumerate(top_indices)]
+        return [(int(idx), rank, float(scores[idx])) for rank, idx in enumerate(top_indices)]
 
-    def _dense_search(self, query: str, top_k: int) -> List[Tuple[int, int]]:
+    def _dense_search(self, query: str, top_k: int) -> List[SearchHit]:
         """Dense 语义检索，返回 [(chunk_index, rank), ...]"""
         query_emb = self.encoder.encode(
             [query], normalize_embeddings=True
         )
         similarities = (self._dense_embeddings @ query_emb.T).flatten()
         top_indices = np.argsort(similarities)[::-1][:top_k]
-        return [(int(idx), rank) for rank, idx in enumerate(top_indices)]
+        return [(int(idx), rank, float(similarities[idx])) for rank, idx in enumerate(top_indices)]
 
     def _reciprocal_rank_fusion(
         self,
-        bm25_results: List[Tuple[int, int]],
-        dense_results: List[Tuple[int, int]],
+        bm25_results: List[SearchHit],
+        dense_results: List[SearchHit],
     ) -> List[int]:
         """
         Reciprocal Rank Fusion
@@ -227,10 +308,10 @@ class HybridRetriever:
         """
         scores: Dict[int, float] = {}
 
-        for idx, rank in bm25_results:
+        for idx, rank, _ in bm25_results:
             scores[idx] = scores.get(idx, 0.0) + self.bm25_weight / (self.rrf_k + rank)
 
-        for idx, rank in dense_results:
+        for idx, rank, _ in dense_results:
             scores[idx] = scores.get(idx, 0.0) + self.dense_weight / (self.rrf_k + rank)
 
         sorted_indices = sorted(scores.keys(), key=lambda x: scores[x], reverse=True)
@@ -261,6 +342,50 @@ class HybridRetriever:
         results.sort(key=lambda x: x.rerank_score, reverse=True)
         return results
 
+    def _trace_candidates(self, results: List[SearchHit]) -> List[dict]:
+        traced = []
+        for idx, rank, score in results:
+            chunk = self._chunks[idx]
+            traced.append(
+                {
+                    "chunk_id": chunk["chunk_id"],
+                    "source_id": chunk["source_id"],
+                    "page": chunk.get("page"),
+                    "rank": rank,
+                    "score": score,
+                }
+            )
+        return traced
+
+    def _trace_indices(self, indices: List[int]) -> List[dict]:
+        traced = []
+        for idx in indices:
+            chunk = self._chunks[idx]
+            traced.append(
+                {
+                    "chunk_id": chunk["chunk_id"],
+                    "source_id": chunk["source_id"],
+                    "page": chunk.get("page"),
+                    "bm25_rank": self._last_bm25_ranks.get(idx, -1),
+                    "dense_rank": self._last_dense_ranks.get(idx, -1),
+                }
+            )
+        return traced
+
+    def _serialize_results(self, results: List[RetrievedChunk]) -> List[dict]:
+        return [
+            {
+                "chunk_id": result.chunk_id,
+                "source_id": result.source_id,
+                "page": result.page,
+                "score": result.score,
+                "bm25_rank": result.bm25_rank,
+                "dense_rank": result.dense_rank,
+                "rerank_score": result.rerank_score,
+            }
+            for result in results
+        ]
+
     def _tokenize(self, text: str) -> List[str]:
         """
         MVP 分词：小写 + 按空格/标点分割 + 去停用词
@@ -284,12 +409,99 @@ class HybridRetriever:
         np.save(path / "dense_embeddings.npy", self._dense_embeddings)
         with open(path / "chunks.json", "w") as f:
             json.dump(self._chunks, f)
+        with open(path / "index_meta.json", "w", encoding="utf-8") as f:
+            json.dump(self._build_index_metadata(), f, ensure_ascii=False, indent=2)
+
+    def _rebuild_dense_embeddings(self):
+        texts = [c["text"] for c in self._chunks]
+        self._dense_embeddings = self.encoder.encode(
+            texts,
+            show_progress_bar=False,
+            normalize_embeddings=True,
+            batch_size=64,
+        )
+
+    def _encoder_kind(self) -> str:
+        if isinstance(self.encoder, _DummyEncoder):
+            return "dummy"
+        return type(self.encoder).__name__
+
+    def _probe_embedding_dim(self) -> int:
+        if isinstance(self.encoder, _DummyEncoder):
+            return int(self.encoder.dim)
+        probe_embedding = self.encoder.encode(["retriever healthcheck"], normalize_embeddings=True)
+        return int(probe_embedding.shape[1])
+
+    def _build_index_metadata(self) -> dict:
+        embedding_dim = None
+        if self._dense_embeddings is not None and len(self._dense_embeddings.shape) == 2:
+            embedding_dim = int(self._dense_embeddings.shape[1])
+        return {
+            "schema_version": 1,
+            "embedding_model": self.embedding_model_name,
+            "encoder_kind": self._encoder_kind(),
+            "embedding_dim": embedding_dim,
+            "chunk_count": len(self._chunks),
+        }
+
+    def _metadata_matches_runtime(self, metadata: dict, cached_dim: int, expected_rows: int) -> bool:
+        if not metadata:
+            return False
+        if metadata.get("embedding_model") != self.embedding_model_name:
+            return False
+        if metadata.get("encoder_kind") != self._encoder_kind():
+            return False
+        if int(metadata.get("chunk_count", -1)) != expected_rows:
+            return False
+        stored_dim = metadata.get("embedding_dim")
+        if stored_dim is None:
+            return False
+        return int(stored_dim) == cached_dim
 
     def load_index(self, path: Path):
         """从磁盘加载索引"""
-        self._dense_embeddings = np.load(path / "dense_embeddings.npy")
         with open(path / "chunks.json") as f:
             self._chunks = json.load(f)
         tokenized = [self._tokenize(c["text"]) for c in self._chunks]
         self._bm25_index = BM25Okapi(tokenized)
+
+        dense_path = path / "dense_embeddings.npy"
+        metadata_path = path / "index_meta.json"
+        metadata = None
+        if metadata_path.exists():
+            with open(metadata_path, encoding="utf-8") as f:
+                metadata = json.load(f)
+        if isinstance(self.encoder, _DummyEncoder):
+            cached_embeddings = np.load(dense_path)
+            expected_rows = len(self._chunks)
+            if self._metadata_matches_runtime(metadata or {}, int(cached_embeddings.shape[1]), expected_rows):
+                self._dense_embeddings = cached_embeddings
+            else:
+                logger.info("Rebuilding dense embeddings with dummy encoder for loaded index.")
+                self._rebuild_dense_embeddings()
+                self.save_index(path)
+            logger.info(f"Loaded index: {len(self._chunks)} chunks")
+            return
+
+        self._dense_embeddings = np.load(dense_path)
+        expected_rows = len(self._chunks)
+        expected_dim = None
+        if self._dense_embeddings.shape[0] != expected_rows:
+            expected_dim = self._probe_embedding_dim()
+        elif metadata and self._metadata_matches_runtime(metadata, int(self._dense_embeddings.shape[1]), expected_rows):
+            expected_dim = int(self._dense_embeddings.shape[1])
+        else:
+            expected_dim = self._probe_embedding_dim()
+        if self._dense_embeddings.shape[0] != expected_rows or self._dense_embeddings.shape[1] != expected_dim:
+            logger.warning(
+                "Rebuilding dense embeddings because cached index shape %s does not match current encoder output (%s, %s).",
+                self._dense_embeddings.shape,
+                expected_rows,
+                expected_dim,
+            )
+            self._rebuild_dense_embeddings()
+            self.save_index(path)
+        elif not metadata or not self._metadata_matches_runtime(metadata, int(self._dense_embeddings.shape[1]), expected_rows):
+            logger.info("Refreshing index metadata for %s.", path)
+            self.save_index(path)
         logger.info(f"Loaded index: {len(self._chunks)} chunks")

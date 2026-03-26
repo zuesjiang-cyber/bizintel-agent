@@ -8,11 +8,10 @@
 
 import argparse
 import json
-from pathlib import Path
 from typing import List
 
 from agent.config import settings
-from agent.schemas import DocumentMeta, TextChunk
+from agent.schemas import TextChunk
 from tools.doc_parser import load_company_pack
 from retrieval.chunking import TextChunker
 

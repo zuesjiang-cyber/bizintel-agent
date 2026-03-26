@@ -17,6 +17,14 @@ import tiktoken
 from agent.schemas import TextChunk, DocumentMeta
 
 
+class _WhitespaceTokenizer:
+    def encode(self, text: str):
+        return re.findall(r"\S+", text)
+
+    def decode(self, tokens):
+        return " ".join(tokens)
+
+
 class TextChunker:
     def __init__(
         self,
@@ -28,7 +36,10 @@ class TextChunker:
         self.target_size = target_chunk_size
         self.max_size = max_chunk_size
         self.overlap_size = overlap_size
-        self.tokenizer = tiktoken.get_encoding(encoding_name)
+        try:
+            self.tokenizer = tiktoken.get_encoding(encoding_name)
+        except Exception:
+            self.tokenizer = _WhitespaceTokenizer()
 
     def chunk_document(self, meta: DocumentMeta, text: str) -> List[TextChunk]:
         """将一篇文档切成 chunks"""

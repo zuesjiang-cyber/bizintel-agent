@@ -4,8 +4,6 @@
 """
 
 import time
-import json
-from data.eval_cases.benchmark import EVAL_CASES # Need to make sure this or a mocked version exists
 from retrieval.hybrid_retriever import HybridRetriever
 from agent.config import settings
 

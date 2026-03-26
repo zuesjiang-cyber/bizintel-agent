@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 from agent.config import settings
-from agent.schemas import AnalysisMode, AnalysisPlan, GeneratedMemo, DocumentMeta
+from agent.schemas import AnalysisMode, DocumentMeta
 from agent.planner import Planner
 from agent.executor import AnalysisExecutor
 from agent.report_writer import ReportWriter
@@ -22,26 +22,41 @@ logger = logging.getLogger(__name__)
 
 
 class BizIntelAgent:
-    def __init__(self, index_dir: Optional[Path] = None):
+    def __init__(
+        self,
+        index_dir: Optional[Path] = None,
+        load_models: bool = True,
+        demo_mode: bool = False,
+        verify_report: bool = True,
+    ):
         logger.info("Initializing BizIntel Agent...")
+        self.demo_mode = demo_mode
 
         # 加载检索引擎
         self.retriever = HybridRetriever(
             embedding_model=settings.embedding_model,
             reranker_model=settings.reranker_model,
+            load_models=load_models,
         )
 
-        idx_dir = index_dir or (settings.data_dir / "index")
-        if idx_dir.exists():
-            self.retriever.load_index(idx_dir)
-            logger.info("Index loaded.")
+        if self.demo_mode:
+            self._load_demo_corpus()
+            logger.info("Demo corpus indexed in-memory.")
         else:
-            logger.warning(f"No index found at {idx_dir}. Run build_index first.")
+            idx_dir = index_dir or (settings.data_dir / "index")
+            if idx_dir.exists():
+                self.retriever.load_index(idx_dir)
+                logger.info("Index loaded.")
+            else:
+                logger.warning(f"No index found at {idx_dir}. Run build_index first.")
 
         # 初始化组件
-        self.planner = Planner()
-        self.executor = AnalysisExecutor(self.retriever)
-        self.report_writer = ReportWriter()
+        self.planner = Planner(force_stub=demo_mode)
+        self.executor = AnalysisExecutor(self.retriever, demo_mode=demo_mode)
+        self.report_writer = ReportWriter(
+            demo_mode=demo_mode,
+            enable_report_verification=verify_report,
+        )
 
         logger.info("BizIntel Agent ready.")
 
@@ -98,7 +113,27 @@ class BizIntelAgent:
             "memo_object": memo,
             "plan": plan,
             "workflow_events": workflow_events,
+            "step_outputs": step_outputs,
         }
+
+    def _load_demo_corpus(self) -> None:
+        processed_dir = settings.data_dir / "processed"
+        if not processed_dir.exists():
+            raise FileNotFoundError(f"Processed data directory not found: {processed_dir}")
+
+        chunks = []
+        for company_dir in sorted(processed_dir.iterdir()):
+            if not company_dir.is_dir():
+                continue
+            chunks_file = company_dir / "chunks.json"
+            if chunks_file.exists():
+                with open(chunks_file) as f:
+                    chunks.extend(json.load(f))
+
+        if not chunks:
+            raise RuntimeError("Demo mode requires at least one processed chunks.json file.")
+
+        self.retriever.index(chunks)
 
     def _collect_sources(self, step_outputs: dict) -> list:
         """从执行结果中收集所有使用过的来源"""

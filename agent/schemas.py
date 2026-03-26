@@ -22,6 +22,10 @@ class DocumentMeta:
     url: Optional[str] = None
     date: Optional[str] = None
     company: Optional[str] = None
+    period: Optional[str] = None
+    published_at: Optional[str] = None
+    issuer: Optional[str] = None
+    is_primary: Optional[bool] = None
 
 
 @dataclass
@@ -56,7 +60,9 @@ class AnalysisStep:
     description: str
     required: bool
     search_queries: List[str] = field(default_factory=list)
+    query_contracts: List[Dict[str, Any]] = field(default_factory=list)
     output_schema: Dict[str, str] = field(default_factory=dict)
+    evidence_requirements: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -64,6 +70,7 @@ class AnalysisPlan:
     mode: AnalysisMode
     user_query: str
     steps: List[AnalysisStep] = field(default_factory=list)
+    contract: Dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
 
 
@@ -109,6 +116,7 @@ class Claim:
     text: str
     section: str                       # 来自 memo 的哪个 section
     cited_sources: List[str] = field(default_factory=list)
+    cited_chunks: List[str] = field(default_factory=list)
     contains_numbers: bool = False
     extracted_numbers: List[str] = field(default_factory=list)
     specificity_score: float = 0.0
@@ -122,6 +130,10 @@ class VerificationResult:
     numeric_verified: Optional[bool]
     supporting_evidence: List[str]     # 支撑的原文片段
     explanation: str
+    failure_reason: Optional[str] = None
+    supporting_source_ids: List[str] = field(default_factory=list)
+    supporting_chunk_ids: List[str] = field(default_factory=list)
+    primary_source_supported: Optional[bool] = None
 
 
 # ========== Memo ==========
@@ -130,6 +142,8 @@ class VerificationResult:
 class MemoSection:
     title: str
     content: str
+    evidence_notes: List[Dict[str, Any]] = field(default_factory=list)
+    writing_trace: Dict[str, Any] = field(default_factory=dict)
     claims: List[Claim] = field(default_factory=list)
     verification_results: List[VerificationResult] = field(default_factory=list)
 
@@ -139,6 +153,8 @@ class GeneratedMemo:
     title: str
     mode: AnalysisMode
     query: str
+    executive_summary: str = ""
+    contract: Dict[str, Any] = field(default_factory=dict)
     sections: List[MemoSection] = field(default_factory=list)
     sources: List[DocumentMeta] = field(default_factory=list)
     generated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())

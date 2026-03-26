@@ -1,25 +1,32 @@
 [
-    {
-        "query": "Who are the founders of Stripe?",
-        "expected_mode": "COMPANY",
-        "required_facts": [
-            "Patrick Collison",
-            "John Collison",
-            "2010"
-        ]
-    },
-    {
-        "query": "What is Stripe's total funding?",
-        "expected_mode": "COMPANY",
-        "required_facts": [
-            "8.7",
-            "Billion",
-            "6.5"
-        ]
-    },
-    {
-        "query": "How is Notion related to the cloud computing market?",
-        "expected_mode": "COMPANY",
-        "required_facts": []
-    }
+  {
+    "query": "Assess Stripe's revenue quality, valuation drivers, and key monitorables",
+    "company": "stripe",
+    "expected_mode": "COMPANY",
+    "required_facts": [
+      "1 trillion",
+      "8.7",
+      "50 billion"
+    ]
+  },
+  {
+    "query": "What are the main bull and bear arguments for Stripe based on the local source pack?",
+    "company": "stripe",
+    "expected_mode": "COMPANY",
+    "required_facts": [
+      "95 billion",
+      "50 billion",
+      "pricing pressure"
+    ]
+  },
+  {
+    "query": "How should an investor think about Stripe's competitive position versus Adyen and PayPal?",
+    "company": "stripe",
+    "expected_mode": "COMPANY",
+    "required_facts": [
+      "Adyen",
+      "Braintree",
+      "enterprise"
+    ]
+  }
 ]

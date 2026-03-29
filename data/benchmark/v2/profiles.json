@@ -2,7 +2,7 @@
   "profiles": {
     "diagnostic_dev": {
       "track": "diagnostic",
-      "purpose": "Failure-revealing development benchmark covering all major benchmark categories.",
+      "purpose": "Failure-revealing development benchmark covering all major benchmark categories, including legacy comparison stress tests.",
       "split": "dev"
     },
     "diagnostic_test": {
@@ -10,9 +10,9 @@
       "purpose": "Held-out diagnostic benchmark covering unseen items from the same frozen corpus.",
       "split": "test"
     },
-    "trust_showcase_v1": {
+    "trust_showcase_v2": {
       "track": "showcase",
-      "purpose": "Public-facing trust showcase using narrower, evidence-bound questions designed to favor direct citation binding over open-ended synthesis.",
+      "purpose": "Public-facing trust showcase for the deep-research controller on narrow, period-locked, evidence-bound single-company questions.",
       "item_ids": [
         "BO-002",
         "NUM-001",
@@ -21,13 +21,29 @@
         "SRC-001"
       ],
       "target_metrics": {
-        "verified_claim_coverage": {
-          "target": 0.828,
-          "direction": "at_least"
+        "wrong_entity_rate": {
+          "target": 0.0,
+          "direction": "at_most"
+        },
+        "wrong_period_rate": {
+          "target": 0.1,
+          "direction": "at_most"
         },
         "unsupported_claim_rate": {
-          "target": 0.1225,
+          "target": 0.15,
           "direction": "at_most"
+        },
+        "required_subquestion_coverage": {
+          "target": 0.75,
+          "direction": "at_least"
+        },
+        "required_slot_coverage": {
+          "target": 0.75,
+          "direction": "at_least"
+        },
+        "decision_replay_consistency": {
+          "target": 1.0,
+          "direction": "at_least"
         }
       },
       "question_constraints": {

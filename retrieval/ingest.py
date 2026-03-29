@@ -47,6 +47,12 @@ def ingest_company(company_name: str) -> List[TextChunk]:
             "source_id": c.source_id,
             "page": c.page,
             "token_count": c.token_count,
+            "company": next((m.company for m in all_metas if m.source_id == c.source_id), company_name),
+            "doc_id": c.source_id,
+            "source_type": next((m.source_type for m in all_metas if m.source_id == c.source_id), None),
+            "period": next((m.period for m in all_metas if m.source_id == c.source_id), None),
+            "title": next((m.title for m in all_metas if m.source_id == c.source_id), None),
+            "is_primary": next((m.is_primary for m in all_metas if m.source_id == c.source_id), None),
         }
         for c in all_chunks
     ]
@@ -61,6 +67,8 @@ def ingest_company(company_name: str) -> List[TextChunk]:
             "url": m.url,
             "date": m.date,
             "company": m.company,
+            "period": m.period,
+            "is_primary": m.is_primary,
         }
         for m in all_metas
     ]

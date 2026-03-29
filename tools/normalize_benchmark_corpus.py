@@ -207,6 +207,7 @@ def normalize_company(company: str) -> dict:
         processed_sources.append(
             {
                 "source_id": meta.source_id,
+                "doc_id": doc["doc_id"],
                 "source_type": meta.source_type,
                 "title": meta.title,
                 "url": meta.url,
@@ -238,8 +239,14 @@ def normalize_company(company: str) -> dict:
                     "chunk_id": chunk.chunk_id,
                     "text": chunk.text,
                     "source_id": chunk.source_id,
+                    "doc_id": doc["doc_id"],
+                    "company": company,
+                    "source_type": doc["source_type"],
+                    "period": doc["period"],
+                    "title": doc["title"],
                     "page": chunk.page,
                     "token_count": chunk.token_count,
+                    "is_primary": doc.get("is_primary", True),
                 }
             )
 

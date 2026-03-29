@@ -1,46 +1,53 @@
 # Showcase Protocol
 
-This protocol defines a separate `showcase` track for `v2`. It does not replace the full diagnostic benchmark.
+这个协议定义 `v2` 的 `showcase` 轨道。  
+它不是完整 benchmark 的替代，而是当前深度研究控制器的公开演示轨道。
 
-## Why a Separate Showcase Track Exists
+## 为什么要单独有 Showcase
 
-The diagnostic suite is intentionally broad and failure-revealing. It includes open-ended synthesis prompts that are useful for finding hallucinations, but they are a poor fit for a public trust demo when the product goal is:
+diagnostic 题集的职责是暴露问题。  
+showcase 题集的职责是证明当前产品边界内，系统可以做到：
 
-- high verified citation binding
-- low unsupported-claim rate
-- conservative, evidence-first answers
+- 证据绑定
+- 子问题完成
+- 决策可回放
+- 在证据不足时保守输出
 
-Those are different jobs.
+这两者不是一个工作。
 
-## Target Envelope
+## 当前目标包络
 
-The `trust_showcase_v1` profile is designed around this envelope:
+`trust_showcase_v2` 的目标不是“写得最好”，而是先过这些门槛：
 
-- `verified_claim_coverage >= 0.828`
-- `unsupported_claim_rate <= 0.1225`
+- `wrong_entity_rate <= 0.0`
+- `wrong_period_rate <= 0.10`
+- `unsupported_claim_rate <= 0.15`
+- `required_subquestion_coverage >= 0.75`
+- `required_slot_coverage >= 0.75`
+- `decision_replay_consistency >= 1.0`
 
-These are target gates, not guaranteed outputs. If the system misses them, the run should report that directly.
+如果没过，就直接报没过，不包装。
 
-## Question Design Rules
+## 题目规则
 
-Showcase questions should:
+showcase 题目必须：
 
-- ask for at most `3` must-cover facts
-- lock the answer to named periods
-- name the allowed source pack implicitly or explicitly
-- prefer source-priority or period-diff tasks over broad investment judgments
-- allow the answer to distinguish stronger evidence from weaker management framing
+- 单公司
+- 锁定时期
+- `must_cover` 不超过 `3`
+- 至少需要 `2` 个不同来源
+- 更适合 evidence-bound 输出，而不是长篇 thesis
 
-Showcase questions should not:
+showcase 题目不应该：
 
-- ask for broad catalyst/risk narratives
-- ask which company is "better" without a bounded comparison frame
-- require long multi-paragraph investment theses
-- encourage unstated causal explanations
+- 让系统自由比较两家公司孰优孰劣
+- 要求开放式投资建议
+- 需要很多隐含推理链条
+- 鼓励没有证据的因果解释
 
-## Current Showcase Portfolio
+## 当前题目池
 
-`trust_showcase_v1` includes:
+`trust_showcase_v2` 包含：
 
 - `BO-002`
 - `NUM-001`
@@ -48,17 +55,17 @@ Showcase questions should not:
 - `TS-003`
 - `SRC-001`
 
-The common pattern is that each item is:
+共同特征：
 
-- medium difficulty
-- period-locked
-- answerable from `2` minimum distinct sources
-- narrow enough to support slot-like, evidence-bound output
+- 中等难度
+- 单公司
+- 时期明确
+- 槽位清楚
+- 适合验证研究控制器而不是拼文风
 
-## Anti P-Hacking Rule
+## 反 P-Hacking 规则
 
-The showcase track is allowed to be narrower than the diagnostic track, but it must be frozen before release reporting:
-
-- do not swap items after seeing the latest score
-- if the showcase item list changes, record a new profile name
-- if item wording or evidence changes, bump the benchmark version
+- 不能在看到最新分数后再换题
+- 不能把 showcase 当完整 benchmark 报告
+- 如果 item list 变化，必须改 profile 名
+- 如果题目 wording、evidence 或 target 变化，必须 bump benchmark version

@@ -16,7 +16,7 @@ import re
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 from agent.artifacts import build_trace_payload
 from agent.config import settings
@@ -30,6 +30,17 @@ from agent.schemas import Claim
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
+
+SLOT_TOKEN_ALIASES = {
+    "revenue": {"revenue", "sales", "topline", "top", "line", "net", "sales"},
+    "profitability": {"profitability", "margin", "margins", "ebitda", "gross", "operating", "profit"},
+    "management": {"management", "commentary", "tone", "outlook", "guidance", "demand", "framing", "narrative"},
+    "risk": {"risk", "risks", "headwind", "headwinds", "challenge", "bear"},
+    "catalyst": {"catalyst", "catalysts", "driver", "drivers", "bull", "tailwind"},
+    "comparison": {"comparison", "compare", "versus", "vs", "change", "shift"},
+    "evidence": {"evidence", "support", "supported", "confidence", "distinction", "reconciliation"},
+    "business": {"business", "model", "monetization", "mix", "product", "products"},
+}
 
 
 def build_claim_diagnostics(claims, verification_results) -> List[dict]:
@@ -81,6 +92,176 @@ def required_fact_recall(markdown: str, required_facts: List[str]) -> float:
     markdown_lower = markdown.lower()
     found = [fact for fact in required_facts if fact.lower() in markdown_lower]
     return len(found) / len(required_facts)
+
+
+def _normalized_text(value: str | None) -> str:
+    if not value:
+        return ""
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", value.lower())).strip()
+
+
+def _tokenize_with_aliases(value: str | None) -> set[str]:
+    normalized = _normalized_text(value)
+    if not normalized:
+        return set()
+    tokens = set(normalized.split())
+    expanded = set(tokens)
+    for token in tokens:
+        expanded.update(SLOT_TOKEN_ALIASES.get(token, set()))
+    return expanded
+
+
+def _status_value(status: Any) -> str:
+    return getattr(status, "value", str(status))
+
+
+def _lane_value(lane: Any) -> str:
+    return getattr(lane, "value", str(lane))
+
+
+def _subquestion_covers_slot(result: Any, required_slot: str) -> bool:
+    slot_tokens = _tokenize_with_aliases(required_slot)
+    if not slot_tokens:
+        return False
+
+    subquestion = getattr(result, "subquestion", None)
+    haystacks = [
+        getattr(subquestion, "fact_slot", ""),
+        getattr(subquestion, "metric_family", ""),
+        getattr(subquestion, "text", ""),
+        getattr(result, "answer_text", ""),
+        getattr(result, "supported_content", ""),
+    ]
+    hay_tokens = set()
+    for item in haystacks:
+        hay_tokens.update(_tokenize_with_aliases(item))
+    if not hay_tokens:
+        return False
+
+    overlap = slot_tokens & hay_tokens
+    required_overlap = max(1, min(2, len(slot_tokens)))
+    return len(overlap) >= required_overlap
+
+
+def score_research_trace(
+    result: dict,
+    required_slots: List[str],
+    *,
+    expected_companies: List[str] | None = None,
+    target_periods: List[str] | None = None,
+) -> dict:
+    subquestion_results = list(result.get("subquestion_results") or [])
+    replay = result.get("research_trace")
+    if not subquestion_results:
+        return {
+            "subquestion_count": 0,
+            "required_subquestion_count": 0,
+            "subquestion_completion_rate": 0.0,
+            "required_subquestion_coverage": 0.0,
+            "required_slot_coverage": 0.0 if required_slots else 1.0,
+            "decision_trace_coverage": 0.0,
+            "decision_replay_consistency": 0.0,
+            "refused_subquestion_rate": 0.0,
+            "hard_fact_completion_rate": 0.0,
+            "semantic_completion_rate": 0.0,
+            "wrong_entity_rate": 0.0,
+            "wrong_period_rate": 0.0,
+            "controller_failure_reasons": ["no_subquestions"],
+        }
+
+    completed = [item for item in subquestion_results if _status_value(item.status) == "completed"]
+    refused = [item for item in subquestion_results if _status_value(item.status) == "refused"]
+    required = [
+        item for item in subquestion_results
+        if getattr(getattr(item, "subquestion", None), "required", True)
+    ]
+    required_completed = [item for item in required if _status_value(item.status) == "completed"]
+
+    required_slot_hits = [
+        slot for slot in required_slots
+        if any(_subquestion_covers_slot(item, slot) for item in required_completed)
+    ]
+
+    hard_questions = [
+        item for item in subquestion_results
+        if _lane_value(getattr(getattr(item, "subquestion", None), "lane", "")) == "hard_fact"
+    ]
+    semantic_questions = [
+        item for item in subquestion_results
+        if _lane_value(getattr(getattr(item, "subquestion", None), "lane", "")) == "semantic"
+    ]
+
+    decisions = list(getattr(replay, "decisions", []) or [])
+    decisions_by_question: Dict[str, int] = {}
+    for decision in decisions:
+        question_id = getattr(decision, "question_id", "")
+        if question_id:
+            decisions_by_question[question_id] = decisions_by_question.get(question_id, 0) + 1
+
+    replay_subquestions = list(getattr(replay, "subquestions", []) or [])
+    replay_status_by_id = {
+        getattr(item, "question_id", ""): _status_value(getattr(item, "status", ""))
+        for item in replay_subquestions
+        if getattr(item, "question_id", "")
+    }
+    result_status_by_id = {
+        getattr(getattr(item, "subquestion", None), "question_id", ""): _status_value(item.status)
+        for item in subquestion_results
+        if getattr(getattr(item, "subquestion", None), "question_id", "")
+    }
+    replay_consistent = (
+        bool(replay_subquestions)
+        and replay_status_by_id == result_status_by_id
+        and all(question_id in decisions_by_question for question_id in result_status_by_id)
+    )
+
+    expected_company_set = {_normalized_text(company) for company in expected_companies or [] if company}
+    target_period_set = {_normalized_text(period) for period in target_periods or [] if period}
+    evidence_chunks = [chunk for item in subquestion_results for chunk in getattr(item, "evidence", [])]
+    wrong_entity = 0
+    wrong_period = 0
+    checked_period_chunks = 0
+    for chunk in evidence_chunks:
+        chunk_company = _normalized_text(getattr(chunk, "company", ""))
+        if expected_company_set and chunk_company and chunk_company not in expected_company_set:
+            wrong_entity += 1
+        chunk_period = _normalized_text(getattr(chunk, "period", ""))
+        if target_period_set and chunk_period:
+            checked_period_chunks += 1
+            if chunk_period not in target_period_set:
+                wrong_period += 1
+
+    controller_failure_reasons = sorted(
+        {
+            getattr(item, "refusal_reason", "").strip()
+            for item in refused
+            if getattr(item, "refusal_reason", "").strip()
+        }
+    )
+
+    return {
+        "subquestion_count": len(subquestion_results),
+        "required_subquestion_count": len(required),
+        "subquestion_completion_rate": len(completed) / len(subquestion_results),
+        "required_subquestion_coverage": len(required_completed) / max(1, len(required)),
+        "required_slot_coverage": (
+            len(required_slot_hits) / len(required_slots)
+            if required_slots
+            else len(required_completed) / max(1, len(required))
+        ),
+        "decision_trace_coverage": len(decisions_by_question) / max(1, len(result_status_by_id)),
+        "decision_replay_consistency": 1.0 if replay_consistent else 0.0,
+        "refused_subquestion_rate": len(refused) / len(subquestion_results),
+        "hard_fact_completion_rate": (
+            len([item for item in hard_questions if _status_value(item.status) == "completed"]) / max(1, len(hard_questions))
+        ),
+        "semantic_completion_rate": (
+            len([item for item in semantic_questions if _status_value(item.status) == "completed"]) / max(1, len(semantic_questions))
+        ),
+        "wrong_entity_rate": wrong_entity / max(1, len(evidence_chunks)) if evidence_chunks else 0.0,
+        "wrong_period_rate": wrong_period / max(1, checked_period_chunks) if checked_period_chunks else 0.0,
+        "controller_failure_reasons": controller_failure_reasons,
+    }
 
 
 def extract_scorable_markdown(markdown: str) -> str:
@@ -312,6 +493,11 @@ def evaluate(benchmark_file: Path, output_file: Path):
             extractor=extractor,
             verifier=verifier,
         )
+        bizintel_research_metrics = score_research_trace(
+            bizintel_result,
+            required_facts,
+            expected_companies=[company],
+        )
         plain_llm_metrics = score_markdown(
             plain_llm_markdown,
             required_facts,
@@ -348,6 +534,7 @@ def evaluate(benchmark_file: Path, output_file: Path):
                     "scoreable_answer": bizintel_metrics["scoreable_markdown"],
                     "pipeline_trace": build_trace_payload(bizintel_result),
                     "claim_diagnostics": bizintel_metrics["claim_diagnostics"],
+                    "research_metrics": bizintel_research_metrics,
                 },
                 "plain_llm_trace": {
                     "final_answer": plain_llm_markdown,

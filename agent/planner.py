@@ -296,9 +296,11 @@ class Planner:
             ),
         }
 
-        if query_type == "time_sensitive":
-            periods = re.findall(r"\bq[1-4]\b|\b20\d{2}\b", query_lower)
-            contract["required_periods"] = periods or ["current_period", "prior_period"]
+        extracted_periods = self._extract_required_periods(query_lower)
+        if extracted_periods:
+            contract["required_periods"] = extracted_periods
+        elif query_type == "time_sensitive":
+            contract["required_periods"] = ["current_period", "prior_period"]
 
         return contract
 
@@ -489,7 +491,6 @@ class Planner:
         contract: dict,
     ) -> List[dict]:
         """Generate structured retrieval contracts and derive search query strings from them."""
-        del contract
         company_match = self.classifier._detect_companies(user_query.lower())
         entities = self._infer_entities(user_query)
         main_entity = company_match[0].title() if company_match else entities[0]
@@ -497,21 +498,25 @@ class Planner:
         if mode == AnalysisMode.COMPANY:
             if step.name == "company_overview":
                 return self._wrap_stub_queries(
+                    contract,
                     step.evidence_requirements,
                     [f"{main_entity} founding history founders", f"{main_entity} overall company profile overview"],
                 )
             if step.name == "business_model":
                 return self._wrap_stub_queries(
+                    contract,
                     step.evidence_requirements,
                     [f"{main_entity} business model revenue streams", f"{main_entity} core products pricing"],
                 )
             if step.name == "financial_analysis":
                 return self._wrap_stub_queries(
+                    contract,
                     step.evidence_requirements,
                     [f"{main_entity} funding rounds Series valuation", f"{main_entity} annual revenue payment volume"],
                 )
             if step.name == "financial_quality":
                 return self._wrap_stub_queries(
+                    contract,
                     step.evidence_requirements,
                     [
                         f"{main_entity} gross margin operating margin free cash flow",
@@ -520,11 +525,13 @@ class Planner:
                 )
             if step.name == "competitive_landscape":
                 return self._wrap_stub_queries(
+                    contract,
                     step.evidence_requirements,
                     [f"{main_entity} competitors market share", f"{main_entity} differentiation vs competitors"],
                 )
             if step.name == "investment_takeaway":
                 return self._wrap_stub_queries(
+                    contract,
                     step.evidence_requirements,
                     [
                         f"{main_entity} valuation multiples catalysts monitorable KPIs",
@@ -533,6 +540,7 @@ class Planner:
                 )
             if step.name == "risks_and_outlook":
                 return self._wrap_stub_queries(
+                    contract,
                     step.evidence_requirements,
                     [f"{main_entity} regulatory risks challenges", f"{main_entity} growth headwinds outlook"],
                 )
@@ -542,6 +550,7 @@ class Planner:
             entities_text = " vs ".join(entity_pair) if len(entity_pair) >= 2 else main_entity
             if step.name == "profiles_overview":
                 return self._wrap_stub_queries(
+                    contract,
                     step.evidence_requirements,
                     [
                         f"{entities_text} company profiles scale overview",
@@ -550,11 +559,13 @@ class Planner:
                 )
             if step.name == "product_comparison":
                 return self._wrap_stub_queries(
+                    contract,
                     step.evidence_requirements,
                     [f"{entities_text} product features pricing compare", f"{entities_text} developer integration comparison"],
                 )
             if step.name == "market_positioning":
                 return self._wrap_stub_queries(
+                    contract,
                     step.evidence_requirements,
                     [
                         f"{entities_text} target customers enterprise developer go to market",
@@ -563,6 +574,7 @@ class Planner:
                 )
             if step.name == "strengths_and_weaknesses":
                 return self._wrap_stub_queries(
+                    contract,
                     step.evidence_requirements,
                     [
                         f"{entities_text} strategic framing strengths weaknesses comparison",
@@ -572,12 +584,14 @@ class Planner:
 
         if mode == AnalysisMode.INDUSTRY and step.name == "market_sizing":
             return self._wrap_stub_queries(
+                contract,
                 step.evidence_requirements,
                 [f"{user_query} market size TAM CAGR 2024", f"{user_query} global revenue projections"],
             )
 
         step_hint = step.name.replace("_", " ")
         return self._wrap_stub_queries(
+            contract,
             step.evidence_requirements,
             [
                 f"{user_query} {step_hint} details",
@@ -585,26 +599,27 @@ class Planner:
             ],
         )
 
-    def _wrap_stub_queries(self, evidence_requirements: dict, queries: List[str]) -> List[dict]:
+    def _wrap_stub_queries(self, contract: dict, evidence_requirements: dict, queries: List[str]) -> List[dict]:
         fact_slot = self._default_fact_slot(evidence_requirements)
+        filters = self._build_query_filters(contract, evidence_requirements)
         return [
             {
                 "fact_slot": fact_slot,
                 "query_text": query,
                 "source_type": list(evidence_requirements.get("allowed_source_types", [])),
-                "filters": {},
+                "filters": filters,
                 "expected_evidence_type": "narrative",
                 "calculation_hint": "",
             }
             for query in queries
         ]
 
-    def _query_contract_from_string(self, query: str, evidence_requirements: dict) -> dict:
+    def _query_contract_from_string(self, query: str, contract: dict, evidence_requirements: dict) -> dict:
         return {
             "fact_slot": self._default_fact_slot(evidence_requirements),
             "query_text": query,
             "source_type": list(evidence_requirements.get("allowed_source_types", [])),
-            "filters": {},
+            "filters": self._build_query_filters(contract, evidence_requirements),
             "expected_evidence_type": "narrative",
             "calculation_hint": "",
         }
@@ -682,3 +697,30 @@ class Planner:
                 break
 
         return " ".join(token.title() for token in candidate_tokens)
+
+    def _extract_required_periods(self, query_lower: str) -> List[str]:
+        periods: List[str] = []
+
+        for match in re.finditer(r"\bq([1-4])\s*(20\d{2})\b", query_lower):
+            periods.append(f"{match.group(2)}Q{match.group(1)}")
+        for match in re.finditer(r"\bfy\s*(20\d{2})\b", query_lower):
+            periods.append(f"{match.group(1)}FY")
+        for match in re.finditer(r"\b(20\d{2})\b", query_lower):
+            year = match.group(1)
+            if not any(period.startswith(year) for period in periods):
+                periods.append(year)
+
+        return list(dict.fromkeys(periods))
+
+    def _build_query_filters(self, contract: dict, evidence_requirements: dict) -> dict:
+        entities = [
+            entity for entity in contract.get("entities", [])
+            if entity and entity != "Unknown Company"
+        ]
+        periods = list(contract.get("required_periods", []))
+        source_types = list(evidence_requirements.get("allowed_source_types", []))
+        return {
+            "companies": entities,
+            "periods": periods,
+            "source_types": source_types,
+        }

@@ -17,9 +17,14 @@
 flowchart TD
     User["研究请求"] --> Entry["CLI / Streamlit / Demo"]
     Entry --> Orchestrator["BizIntelAgent"]
-    Orchestrator --> Controller["ResearchController"]
+    Orchestrator --> Agent["HelloDeepResearchAgent"]
 
-    Controller --> Task["ResearchTask"]
+    Agent --> Planner["TODO Planner Agent"]
+    Agent --> Summarizer["Task Summarizer Agent"]
+    Agent --> Writer["Report Writer Agent"]
+    Summarizer --> Tools["ResearchController Tools"]
+
+    Tools --> Task["ResearchTask"]
     Task --> Tree["ResearchSubquestion Tree"]
 
     Tree --> HF["Hard-Fact Lane"]
@@ -36,7 +41,8 @@ flowchart TD
 
     Assess --> Answer["Batch Answer Generation"]
     Answer --> Verify["Claim Extractor + EvidenceVerifier"]
-    Verify --> Gate["Report Gating"]
+    Verify --> Writer
+    Writer --> Gate["Report Gating"]
     Gate --> Memo["GeneratedMemo"]
     Memo --> Artifacts["memo.md / trace.json / summary.json / verification.csv"]
 ```
@@ -95,11 +101,26 @@ flowchart TD
 - 决策记录
 - LLM 调用计数
 
-## 4. 研究控制器
+## 4. 外层 Agent 与工具层
 
-控制器位于 [research_controller.py](/Users/jiang/Documents/cv%20project/bizintel-agent/agent/research_controller.py)。
+外层 agent 位于 [hello_research_agent.py](/Users/jiang/Documents/cv%20project/bizintel-agent/agent/hello_research_agent.py)。
 
-它负责：
+- `TODO Planner Agent`
+  负责把主问题拆成研究 TODO。
+
+- `Task Summarizer Agent`
+  负责对子问题循环调用 RAG 工具：
+  - 检索
+  - 评估
+  - 补查
+  - 记录 tool call
+
+- `Report Writer Agent`
+  负责对子问题答案做最终汇总和 memo 输出。
+
+底层工具层位于 [research_controller.py](/Users/jiang/Documents/cv%20project/bizintel-agent/agent/research_controller.py)。
+
+工具层负责：
 
 - 拆分子问题
 - 强制通道归类
@@ -109,7 +130,7 @@ flowchart TD
 - 记录决策
 - 最终汇总
 
-它不负责：
+工具层不负责：
 
 - 绕过检索边界
 - 越过验证直接写结论

@@ -1,0 +1,228 @@
+{
+  "schema_version": 1,
+  "sample_companies": [
+    "stripe",
+    "cloudflare",
+    "fastly"
+  ],
+  "benchmark_versions": [
+    "v1",
+    "v2"
+  ],
+  "benchmark_assets": {
+    "v1": {
+      "local_facts_path": "data/benchmark/v1/local_facts.jsonl",
+      "local_fact_count": 41,
+      "items_path": "data/benchmark/v1/items.jsonl",
+      "profiles_path": "data/benchmark/v1/profiles.json",
+      "splits_path": "data/benchmark/v1/splits.json"
+    },
+    "v2": {
+      "local_facts_path": "data/benchmark/v2/local_facts.jsonl",
+      "local_fact_count": 41,
+      "items_path": "data/benchmark/v2/items.jsonl",
+      "profiles_path": "data/benchmark/v2/profiles.json",
+      "splits_path": "data/benchmark/v2/splits.json"
+    }
+  },
+  "companies": [
+    {
+      "company_id": "stripe",
+      "roles": [
+        "demo",
+        "single_company_smoke"
+      ],
+      "paths": {
+        "raw_manifest": "data/raw/stripe/manifest.json",
+        "normalized_documents": "data/normalized/stripe/documents.jsonl",
+        "normalized_chunks": "data/normalized/stripe/chunks.jsonl",
+        "processed_sources": "data/processed/stripe/sources.json",
+        "processed_chunks": "data/processed/stripe/chunks.json",
+        "legacy_company_pack": "data/company_packs/stripe"
+      },
+      "available": {
+        "raw_manifest": false,
+        "normalized_documents": false,
+        "normalized_chunks": false,
+        "processed_sources": true,
+        "processed_chunks": true,
+        "legacy_company_pack": true
+      },
+      "counts": {
+        "processed_sources": 9,
+        "processed_chunks": 9
+      },
+      "periods": [],
+      "source_types": [],
+      "benchmark_items": {
+        "v1": [],
+        "v2": []
+      },
+      "missing": []
+    },
+    {
+      "company_id": "cloudflare",
+      "roles": [
+        "benchmark",
+        "single_company"
+      ],
+      "paths": {
+        "raw_manifest": "data/raw/cloudflare/manifest.json",
+        "normalized_documents": "data/normalized/cloudflare/documents.jsonl",
+        "normalized_chunks": "data/normalized/cloudflare/chunks.jsonl",
+        "processed_sources": "data/processed/cloudflare/sources.json",
+        "processed_chunks": "data/processed/cloudflare/chunks.json",
+        "legacy_company_pack": "data/company_packs/cloudflare"
+      },
+      "available": {
+        "raw_manifest": true,
+        "normalized_documents": true,
+        "normalized_chunks": true,
+        "processed_sources": true,
+        "processed_chunks": true,
+        "legacy_company_pack": false
+      },
+      "counts": {
+        "raw_documents": 12,
+        "normalized_documents": 12,
+        "normalized_chunks": 631,
+        "processed_sources": 12,
+        "processed_chunks": 631
+      },
+      "periods": [
+        "2024FY",
+        "2025AGM",
+        "2025Q2",
+        "2025Q3",
+        "2025Q4",
+        "company_context",
+        "strategy_context"
+      ],
+      "source_types": [
+        "annual_report",
+        "earnings_call_transcript",
+        "event_page",
+        "investor_presentation",
+        "ir_overview",
+        "proxy_statement",
+        "quarterly_results"
+      ],
+      "benchmark_items": {
+        "v1": [
+          "BO-001",
+          "RC-001",
+          "CMP-001",
+          "CMP-002",
+          "TS-001",
+          "SRC-001"
+        ],
+        "v2": [
+          "BO-001",
+          "RC-001",
+          "CMP-001",
+          "CMP-002",
+          "TS-001",
+          "SRC-001"
+        ]
+      },
+      "missing": [],
+      "aliases": [
+        "Cloudflare",
+        "NET"
+      ],
+      "normalized_source_type_counts": {
+        "annual_report": 1,
+        "earnings_call_transcript": 3,
+        "event_page": 1,
+        "investor_presentation": 1,
+        "ir_overview": 1,
+        "proxy_statement": 1,
+        "quarterly_results": 4
+      }
+    },
+    {
+      "company_id": "fastly",
+      "roles": [
+        "benchmark",
+        "single_company"
+      ],
+      "paths": {
+        "raw_manifest": "data/raw/fastly/manifest.json",
+        "normalized_documents": "data/normalized/fastly/documents.jsonl",
+        "normalized_chunks": "data/normalized/fastly/chunks.jsonl",
+        "processed_sources": "data/processed/fastly/sources.json",
+        "processed_chunks": "data/processed/fastly/chunks.json",
+        "legacy_company_pack": "data/company_packs/fastly"
+      },
+      "available": {
+        "raw_manifest": true,
+        "normalized_documents": true,
+        "normalized_chunks": true,
+        "processed_sources": true,
+        "processed_chunks": true,
+        "legacy_company_pack": false
+      },
+      "counts": {
+        "raw_documents": 14,
+        "normalized_documents": 12,
+        "normalized_chunks": 484,
+        "processed_sources": 12,
+        "processed_chunks": 484
+      },
+      "periods": [
+        "2025FY",
+        "2025Q2",
+        "2025Q3",
+        "2025Q4",
+        "company_context"
+      ],
+      "source_types": [
+        "annual_report",
+        "earnings_call_transcript",
+        "event_page",
+        "investor_presentation",
+        "investor_supplement",
+        "ir_overview",
+        "quarterly_report",
+        "quarterly_results"
+      ],
+      "benchmark_items": {
+        "v1": [
+          "BO-002",
+          "NUM-001",
+          "RC-002",
+          "CMP-001",
+          "CMP-002",
+          "TS-002",
+          "TS-003",
+          "CFL-001"
+        ],
+        "v2": [
+          "BO-002",
+          "NUM-001",
+          "RC-002",
+          "CMP-001",
+          "CMP-002",
+          "TS-002",
+          "TS-003",
+          "CFL-001"
+        ]
+      },
+      "missing": [],
+      "aliases": [
+        "Fastly",
+        "FSLY"
+      ],
+      "normalized_source_type_counts": {
+        "annual_report": 1,
+        "earnings_call_transcript": 3,
+        "investor_presentation": 1,
+        "investor_supplement": 3,
+        "ir_overview": 1,
+        "quarterly_results": 3
+      }
+    }
+  ],
+  "missing": {},
+  "all_required_assets_present": true
+}

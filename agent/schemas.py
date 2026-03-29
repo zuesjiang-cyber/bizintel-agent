@@ -104,6 +104,10 @@ class ResearchTask:
     query: str
     company_id: str
     period: Optional[str] = None
+    target_periods: List[str] = field(default_factory=list)
+    required_slots: List[str] = field(default_factory=list)
+    required_source_types: List[str] = field(default_factory=list)
+    query_types: List[str] = field(default_factory=list)
     mode: AnalysisMode = AnalysisMode.COMPANY
     mentioned_company_ids: List[str] = field(default_factory=list)
     max_subquestions: int = 6
@@ -152,6 +156,8 @@ class EvidenceAssessment:
     valid_chunk_count: int = 0
     best_entailment: float = 0.0
     mean_entailment: float = 0.0
+    best_support: float = 0.0
+    mean_support: float = 0.0
     numeric_match: bool = False
     metric_match: bool = False
     high_trust_hit: bool = False

@@ -42,9 +42,13 @@
 ```mermaid
 flowchart TD
     User["研究问题"] --> Entry["CLI / Streamlit / Demo"]
-    Entry --> Controller["ResearchController"]
-    Controller --> Decompose["问题拆分"]
-    Decompose --> Tree["问题树 / 子问题状态机"]
+    Entry --> Agent["HelloDeepResearchAgent"]
+    Agent --> Planner["TODO Planner Agent"]
+    Agent --> Summarizer["Task Summarizer Agent"]
+    Agent --> Writer["Report Writer Agent"]
+
+    Planner --> Tree["问题树 / 子问题状态机"]
+    Summarizer --> Tools["Trust-first RAG Function Tools<br/>provided by ResearchController"]
 
     Tree --> HF["硬事实通道"]
     Tree --> SM["定性通道"]
@@ -57,7 +61,7 @@ flowchart TD
 
     Verify --> Followup["规则补查 / 有预算时 LLM 反思"]
     Followup --> Tree
-    Verify --> Writer["子问题答案 + 汇总"]
+    Verify --> Writer
     Writer --> Gate["发布前 gating"]
     Gate --> Output["memo.md / trace.json / summary.json / verification.csv"]
 ```
@@ -72,11 +76,21 @@ flowchart TD
 - 在证据不足时做有限补查
 - 记录所有关键决策，支持冻结和回放
 
-这层逻辑由 [research_controller.py](/Users/jiang/Documents/cv%20project/bizintel-agent/agent/research_controller.py) 驱动。
+这层逻辑现在由外层 [hello_research_agent.py](/Users/jiang/Documents/cv%20project/bizintel-agent/agent/hello_research_agent.py) 驱动，底层可信 RAG 工具由 [research_controller.py](/Users/jiang/Documents/cv%20project/bizintel-agent/agent/research_controller.py) 提供。
 
 ## 研究控制器
 
-控制器不是黑盒。它是“规则护栏内的智能控制层”。
+当前不是单一控制器顶层了，而是 hello-agents 风格的三段式外层 agent：
+
+- `TODO Planner Agent`
+- `Task Summarizer Agent`
+- `Report Writer Agent`
+
+其中底层 `ResearchController` 被降到工具层，负责：
+
+- 构建任务对象
+- 暴露子问题规划/检索/评估/补查/写作工具
+- 保证公司/时期/来源/验证护栏不被绕过
 
 ### 子问题状态
 
@@ -141,10 +155,13 @@ flowchart TD
 ## 主要代码入口
 
 - [orchestrator.py](/Users/jiang/Documents/cv%20project/bizintel-agent/agent/orchestrator.py)
-  顶层入口，当前已切到研究控制器主路径。
+  顶层入口，当前已切到 hello-agents 风格外层 agent。
+
+- [hello_research_agent.py](/Users/jiang/Documents/cv%20project/bizintel-agent/agent/hello_research_agent.py)
+  外层 agent 骨架：planner -> task summarizer -> report writer。
 
 - [research_controller.py](/Users/jiang/Documents/cv%20project/bizintel-agent/agent/research_controller.py)
-  问题树、状态机、预算、补查和汇总的核心实现。
+  trust-first RAG 工具层：问题树、状态机、预算、补查和汇总工具。
 
 - [hybrid_retriever.py](/Users/jiang/Documents/cv%20project/bizintel-agent/retrieval/hybrid_retriever.py)
   双通道检索、硬事实排序和 trace。
@@ -159,6 +176,7 @@ flowchart TD
 
 - [architecture.md](/Users/jiang/Documents/cv%20project/bizintel-agent/docs/architecture.md)
 - [benchmark_methodology.md](/Users/jiang/Documents/cv%20project/bizintel-agent/docs/benchmark_methodology.md)
+- [offline_test_system.md](/Users/jiang/Documents/cv%20project/bizintel-agent/docs/offline_test_system.md)
 
 ## 快速开始
 
@@ -174,15 +192,65 @@ make install
 ```bash
 cat > .env <<'EOF'
 OPENAI_API_KEY="your-openai-api-key"
-OPENAI_MODEL="gpt-5.2"
+OPENAI_API_BASE="https://your-openai-compatible-endpoint/v1"
+OPENAI_MODEL="your-provider-supported-model"
 EOF
 ```
+
+注意：
+
+- `OPENAI_MODEL` 必须和你的 `OPENAI_API_BASE` / 分发渠道真实支持的模型名匹配。
+- 不要直接照抄 `gpt-5.2` 之类的占位值到第三方 OpenAI-compatible provider。
+- 当前工程在 live provider 不可用时会自动回退到 rule-based decomposition / stub answer generation，这样 benchmark 不会直接崩溃，但结果会明确反映 provider 不可用带来的质量下降。
 
 如果只是想看完整离线流程：
 
 ```bash
 make demo
 ```
+
+## 离线语料与测试系统
+
+当前离线体系只围绕 3 个样本公司构建，不再假设“任意公司都能直接复现”：
+
+- `stripe`
+  - 用途：demo / 单公司轻量烟雾测试
+  - 语料来源：legacy `company_packs`
+- `cloudflare`
+  - 用途：benchmark 主样本
+  - 语料来源：`raw` + `normalized` + `processed`
+- `fastly`
+  - 用途：benchmark 主样本
+  - 语料来源：`raw` + `normalized` + `processed`
+
+准备离线套件：
+
+```bash
+make prepare-offline-suite
+```
+
+这会：
+
+- 校验样本公司清单
+- 校验 `raw / normalized / processed / benchmark` 资产是否齐全
+- 确保 `local_facts.jsonl` 已生成
+- 输出 `data/offline_suite/report.json`
+
+跑完整离线测试系统：
+
+```bash
+make test-offline-suite
+make check
+```
+
+这里的 `offline stub benchmark` 是管道冒烟，不是质量背书。  
+它主要验证：
+
+- 样本语料是否可读
+- benchmark runner 是否能在离线模式下回放
+- deep-research 控制器是否能稳定输出 trace
+
+如果 stub 分数很差，但目标通过，这说明当前问题在研究质量，不是离线资产或测试链路坏了。
 
 ## 使用方式
 

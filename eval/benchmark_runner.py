@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import gc
 import json
+import logging
 import re
 from collections import Counter
 from datetime import datetime
@@ -24,6 +25,16 @@ try:
     import torch
 except ImportError:  # pragma: no cover
     torch = None
+
+try:
+    from openai import APIConnectionError, APIStatusError, APITimeoutError
+except ImportError:  # pragma: no cover
+    APIConnectionError = None
+    APIStatusError = None
+    APITimeoutError = None
+
+
+logger = logging.getLogger(__name__)
 
 
 def load_jsonl(path: Path) -> List[dict]:
@@ -202,10 +213,42 @@ def build_required_facts(answer_row: dict) -> List[str]:
 
 
 def describe_mode(load_models: bool) -> str:
-    llm_mode = "offline_stub_llm" if settings.llm_mode == "stub" or not settings.openai_api_key else "live_llm"
+    if settings.llm_mode == "stub" or not settings.openai_api_key:
+        llm_mode = "offline_stub_llm"
+    elif settings.strict_live_mode:
+        llm_mode = "strict_live_llm"
+    else:
+        llm_mode = "live_llm"
     retrieval_mode = "real_retrieval" if load_models else "dummy_retrieval"
     verifier_mode = "dummy_nli" if settings.llm_mode == "stub" or not settings.openai_api_key else "real_nli"
     return "_".join([llm_mode, retrieval_mode, verifier_mode])
+
+
+def is_retryable_live_error(exc: Exception) -> bool:
+    if APIStatusError is not None and isinstance(exc, APIStatusError):
+        status_code = getattr(getattr(exc, "response", None), "status_code", None)
+        if status_code is None or int(status_code) >= 500 or int(status_code) == 429:
+            return True
+    if APIConnectionError is not None and isinstance(exc, APIConnectionError):
+        return True
+    if APITimeoutError is not None and isinstance(exc, APITimeoutError):
+        return True
+
+    text = str(exc).lower()
+    retryable_markers = (
+        "unknown provider",
+        "server_error",
+        "timed out",
+        "timeout",
+        "connection error",
+        "bad gateway",
+        "gateway",
+        "502",
+        "503",
+        "504",
+        "rate limit",
+    )
+    return any(marker in text for marker in retryable_markers)
 
 
 def requested_item_ids(splits: dict, split: str) -> List[str]:
@@ -493,6 +536,7 @@ def run(
     existing_rows = load_existing_rows(output_path, version, split, mode, profile_name=profile_name) if resume else {}
     rows_by_item_id = dict(existing_rows)
     evidence_store_cache: Dict[str, Dict[str, List[str]]] = {}
+    max_question_attempts = max(1, int(settings.benchmark_question_max_retries) + 1)
 
     for item_id in item_ids:
         if item_id in rows_by_item_id:
@@ -514,7 +558,34 @@ def run(
             )
         agent = agents[agent_key]
 
-        result = agent.research(item["query"])
+        explicit_company = item_companies[0] if len(item_companies) == 1 else None
+        attempt_count = 0
+        last_error: str | None = None
+        while True:
+            attempt_count += 1
+            try:
+                result = agent.research(
+                    item["query"],
+                    company_id=explicit_company,
+                    target_periods=item.get("target_periods", []),
+                    required_slots=answer_row.get("must_cover", []),
+                    required_source_types=item.get("required_source_types", []),
+                    query_types=item.get("query_type", []),
+                )
+                break
+            except Exception as exc:
+                last_error = f"{type(exc).__name__}: {exc}"
+                if attempt_count < max_question_attempts and is_retryable_live_error(exc):
+                    logger.warning(
+                        "Retrying benchmark item %s after live API error (attempt %s/%s): %s",
+                        item_id,
+                        attempt_count,
+                        max_question_attempts,
+                        last_error,
+                    )
+                    clear_accelerator_cache(skip_gc=False)
+                    continue
+                raise
         memo_markdown = result["memo_markdown"]
         scorable_markdown = extract_scorable_markdown(memo_markdown)
         source_ids = [source.source_id for source in result["memo_object"].sources]
@@ -568,6 +639,8 @@ def run(
             "item_companies": item_companies,
             "sources_used": source_ids,
             "matched_gold_docs": sorted(matched_gold_docs(gold_entries, scorable_markdown, source_ids)),
+            "question_attempts": attempt_count,
+            "runtime_error": last_error,
         }
         rows_by_item_id[item_id] = row
         checkpoint_rows = [rows_by_item_id[current_item_id] for current_item_id in item_ids if current_item_id in rows_by_item_id]
@@ -590,12 +663,26 @@ def main() -> int:
     parser.add_argument("--profile", default=None, help="Optional benchmark profile name from data/benchmark/<version>/profiles.json.")
     parser.add_argument("--load-models", action="store_true", help="Load real retrieval/reranker models instead of dummy retrieval.")
     parser.add_argument("--resume", action="store_true", help="Resume from an existing output file with matching version/split/mode.")
+    parser.add_argument("--strict-live", action="store_true", help="Disable LLM fallback on API errors and retry whole benchmark questions instead.")
+    parser.add_argument("--item-retries", type=int, default=None, help="Retry count per benchmark question when a retryable live API error occurs.")
+    parser.add_argument("--llm-timeout-seconds", type=float, default=None, help="Override OpenAI-compatible request timeout for this run.")
+    parser.add_argument("--llm-request-retries", type=int, default=None, help="Override per-request API retry count for this run.")
     parser.add_argument(
         "--output",
         type=Path,
         default=settings.data_dir.parent / "eval" / "results" / f"benchmark_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
     )
     args = parser.parse_args()
+
+    if args.strict_live:
+        settings.strict_live_mode = True
+        settings.llm_mode = "live"
+    if args.item_retries is not None:
+        settings.benchmark_question_max_retries = max(0, args.item_retries)
+    if args.llm_timeout_seconds is not None:
+        settings.llm_request_timeout_seconds = max(1.0, args.llm_timeout_seconds)
+    if args.llm_request_retries is not None:
+        settings.llm_request_max_retries = max(0, args.llm_request_retries)
 
     payload = run(
         args.version,

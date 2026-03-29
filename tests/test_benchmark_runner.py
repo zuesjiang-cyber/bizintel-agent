@@ -3,6 +3,9 @@ import json
 from pathlib import Path
 import sys
 
+import httpx
+from openai import APIStatusError
+
 from agent.config import settings
 
 
@@ -20,6 +23,7 @@ benchmark_index_profile = MODULE.benchmark_index_profile
 build_payload = MODULE.build_payload
 compute_averages = MODULE.compute_averages
 failure_tags = MODULE.failure_tags
+is_retryable_live_error = MODULE.is_retryable_live_error
 load_existing_rows = MODULE.load_existing_rows
 load_evidence_store_for_companies = MODULE.load_evidence_store_for_companies
 resolve_profile_item_ids = MODULE.resolve_profile_item_ids
@@ -314,3 +318,15 @@ def test_load_evidence_store_for_companies_preserves_chunk_metadata(tmp_path, mo
 
     assert evidence_store["fastly_q4_2025_results"][0]["chunk_id"] == "chunk-001"
     assert evidence_store["fastly_q4_2025_results"][0]["text"] == "Revenue was $144.5 million."
+
+
+def test_is_retryable_live_error_recognizes_provider_502_message():
+    request = httpx.Request("POST", "https://callflow.top/v1/chat/completions")
+    response = httpx.Response(502, request=request)
+    error = APIStatusError(
+        "unknown provider",
+        response=response,
+        body={"error": {"message": "unknown provider for model gpt-5.2", "type": "server_error"}},
+    )
+
+    assert is_retryable_live_error(error) is True

@@ -53,6 +53,14 @@ class TestClaimExtractor:
         assert claims[0].cited_sources == ["cloudflare_10k"]
         assert claims[1].cited_sources == ["cloudflare_q4_call"]
 
+    def test_extract_claim_keeps_inline_citation_after_sentence_boundary(self):
+        text = "- Revenue was $100 million. [Chunk: c1] [Source: fastly_q4]"
+        claims = self.extractor.extract_claims(text, "summary")
+
+        assert len(claims) == 1
+        assert claims[0].cited_sources == ["fastly_q4"]
+        assert claims[0].cited_chunks == ["c1"]
+
     def test_filter_insufficient_evidence_lines(self):
         text = "- Insufficient evidence in the source pack to verify this point directly."
         claims = self.extractor.extract_claims(text, "summary")

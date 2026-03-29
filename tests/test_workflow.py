@@ -1,3 +1,6 @@
+import threading
+import time
+
 from agent.workflow_engine import WorkflowEngine, WorkflowNode, NodeStatus
 
 
@@ -95,3 +98,31 @@ def test_checkpoint():
     checkpoint = engine.get_checkpoint()
     assert "step1" in checkpoint["completed"]
     assert "step2" in checkpoint["completed"]
+
+
+def test_timeout_returns_without_waiting_for_executor_completion():
+    release = threading.Event()
+    started = threading.Event()
+
+    def blocking_executor(_):
+        started.set()
+        release.wait(timeout=1.0)
+        return {"ok": True}
+
+    node = WorkflowNode(
+        name="slow_step",
+        executor=blocking_executor,
+        required=True,
+        max_retries=0,
+        timeout_seconds=0.01,
+    )
+
+    start = time.perf_counter()
+    result = node.execute({})
+    elapsed = time.perf_counter() - start
+    release.set()
+
+    assert started.is_set()
+    assert result.status == NodeStatus.FAILED
+    assert "Soft timeout" in (result.error or "")
+    assert elapsed < 0.3

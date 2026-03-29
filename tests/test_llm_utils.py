@@ -8,12 +8,15 @@ from agent import llm_utils
 from agent.llm_utils import (
     build_openai_client,
     build_stub_executive_summary,
+    build_stub_section_analysis,
     extract_text_from_completion,
     generate_text_response,
     normalize_api_key,
     normalize_openai_base_url,
     should_use_stub_llm,
+    strip_hidden_reasoning,
 )
+from agent.schemas import AnalysisStep, RetrievedChunk
 
 
 def test_should_use_stub_llm_for_missing_key():
@@ -48,6 +51,7 @@ def test_build_openai_client_passes_api_key_and_base_url(monkeypatch):
     assert client.kwargs["api_key"] == "test-key"
     assert client.kwargs["base_url"] == "https://callflow.top/v1"
     assert client.kwargs["max_retries"] == 0
+    assert client.kwargs["timeout"] == llm_utils.settings.llm_request_timeout_seconds
 
 
 def test_extract_text_from_completion_reads_string_content():
@@ -58,6 +62,16 @@ def test_extract_text_from_completion_reads_string_content():
     )
 
     assert extract_text_from_completion(response) == "hello world"
+
+
+def test_extract_text_from_completion_strips_think_blocks_from_string_content():
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(message=SimpleNamespace(content="<think>internal reasoning</think>\nOK")),
+        ]
+    )
+
+    assert extract_text_from_completion(response) == "OK"
 
 
 def test_extract_text_from_completion_reads_text_blocks():
@@ -78,13 +92,17 @@ def test_extract_text_from_completion_reads_text_blocks():
     assert extract_text_from_completion(response) == "hello\nworld"
 
 
+def test_strip_hidden_reasoning_removes_standalone_think_tags():
+    assert strip_hidden_reasoning("<think>\nplan\n</think>\nFinal answer") == "Final answer"
+
+
 def test_generate_text_response_uses_chat_completions_api(caplog):
     captured = {}
 
     class DummyCompletions:
         def create(self, **kwargs):
             captured.update(kwargs)
-            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))])
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="<think>hidden</think>\nok"))])
 
     client = SimpleNamespace(chat=SimpleNamespace(completions=DummyCompletions()))
     with caplog.at_level(logging.INFO):
@@ -164,3 +182,34 @@ def test_build_stub_executive_summary_returns_insufficient_evidence_without_cite
     )
 
     assert summary == "Insufficient evidence in the source pack to support an executive summary."
+
+
+def test_build_stub_section_analysis_preserves_chunk_source_pairing():
+    content = build_stub_section_analysis(
+        AnalysisStep(name="revenue", description="Revenue evidence", required=True),
+        "Assess revenue evidence",
+        [
+            RetrievedChunk(
+                chunk_id="c1",
+                text="Revenue was $10 million.",
+                source_id="s1",
+                page=None,
+                score=1.0,
+                bm25_rank=0,
+                dense_rank=0,
+                rerank_score=1.0,
+            ),
+            RetrievedChunk(
+                chunk_id="c2",
+                text="Management outlook was stable.",
+                source_id="s2",
+                page=None,
+                score=0.5,
+                bm25_rank=1,
+                dense_rank=1,
+                rerank_score=0.5,
+            ),
+        ],
+    )
+
+    assert "[Chunk: c1] [Source: s1]" in content

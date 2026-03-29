@@ -115,6 +115,31 @@ Fastly sells edge cloud services [Source: fastly_10k].
     assert "Fastly sells edge cloud services" in scorable
 
 
+def test_extract_scorable_markdown_strips_evidence_gaps_and_verified_support_lines():
+    markdown = """# Memo
+
+## Executive Summary
+Fastly revenue grew [Source: fastly_q4].
+
+## Hard Fact Findings
+Revenue was $100 million [Source: fastly_q4].
+*Verified section support: 100% claims supported*
+
+## Evidence Gaps
+- Profitability could not be supported confidently.
+
+## Semantic Findings
+Management highlighted enterprise demand [Source: fastly_q4_transcript].
+"""
+
+    scorable = extract_scorable_markdown(markdown)
+
+    assert "Verified section support" not in scorable
+    assert "Evidence Gaps" not in scorable
+    assert "Profitability could not be supported confidently" not in scorable
+    assert "Management highlighted enterprise demand" in scorable
+
+
 def test_score_markdown_ignores_verification_appendix_claims():
     markdown = """# Memo
 

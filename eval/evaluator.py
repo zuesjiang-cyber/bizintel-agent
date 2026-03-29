@@ -280,16 +280,26 @@ def extract_scorable_markdown(markdown: str) -> str:
 
     filtered_lines = []
     skip_coverage_contract = False
+    skip_evidence_gaps = False
     for line in scorable.splitlines():
         stripped = line.strip()
         if stripped == "## Coverage Contract":
             skip_coverage_contract = True
             continue
+        if stripped == "## Evidence Gaps":
+            skip_evidence_gaps = True
+            continue
         if skip_coverage_contract and stripped.startswith("## "):
             skip_coverage_contract = False
+        if skip_evidence_gaps and stripped.startswith("## "):
+            skip_evidence_gaps = False
         if skip_coverage_contract:
             continue
+        if skip_evidence_gaps:
+            continue
         if stripped.startswith("*Section confidence:"):
+            continue
+        if stripped.startswith("*Verified section support:"):
             continue
         if stripped.startswith("*Offline demo heuristic support:"):
             continue

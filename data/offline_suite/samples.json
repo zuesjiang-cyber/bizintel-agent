@@ -1,0 +1,19 @@
+{
+  "companies": [
+    {
+      "company_id": "stripe",
+      "roles": ["demo", "single_company_smoke"],
+      "notes": "Legacy company-pack demo corpus used for lightweight offline walkthroughs."
+    },
+    {
+      "company_id": "cloudflare",
+      "roles": ["benchmark", "single_company"],
+      "notes": "Primary benchmark company for business model, AI narrative, and commentary-shift questions."
+    },
+    {
+      "company_id": "fastly",
+      "roles": ["benchmark", "single_company"],
+      "notes": "Primary benchmark company for revenue mix, profitability, and conflict-handling questions."
+    }
+  ]
+}

@@ -118,7 +118,7 @@ class ClaimExtractor:
                 continue
             if line.startswith("#"):
                 continue
-            parts = re.split(r'(?<=[.!?])\s+(?=[A-Z\[])', line)
+            parts = re.split(r'(?<=[.!?])\s+(?=[A-Z])', line)
             for part in parts:
                 cleaned = part.strip()
                 if cleaned:

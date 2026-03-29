@@ -28,24 +28,35 @@ class WorkflowNode:
         result = NodeResult(status=NodeStatus.RUNNING)
 
         for attempt in range(self.max_retries + 1):
+            pool = ThreadPoolExecutor(max_workers=1)
+            future = None
             try:
-                with ThreadPoolExecutor(max_workers=1) as pool:
-                    future = pool.submit(self.executor, shared_state)
-                    output = future.result(timeout=self.timeout_seconds)
-                
+                future = pool.submit(self.executor, shared_state)
+                output = future.result(timeout=self.timeout_seconds)
+                pool.shutdown(wait=True, cancel_futures=False)
                 result.status = NodeStatus.SUCCESS
                 result.data = output
                 break
-                
             except FuturesTimeoutError:
-                result.error = f"Node timed out after {self.timeout_seconds:.1f}s"
+                cancelled = future.cancel() if future else False
+                pool.shutdown(wait=False, cancel_futures=True)
+                result.error = (
+                    f"Soft timeout after {self.timeout_seconds:.1f}s; "
+                    f"background task may still finish (cancelled={cancelled})"
+                )
                 result.retry_count = attempt
-                logger.error(f"Timeout in node {self.name} (attempt {attempt+1})")
+                logger.error(
+                    "Soft timeout in node %s (attempt %s, cancelled=%s)",
+                    self.name,
+                    attempt + 1,
+                    cancelled,
+                )
 
                 if attempt == self.max_retries:
                     result.status = NodeStatus.FAILED
 
             except Exception as e:
+                pool.shutdown(wait=False, cancel_futures=True)
                 logger.error(f"Error in node {self.name} (attempt {attempt+1}): {e}")
                 result.error = str(e)
                 result.retry_count = attempt

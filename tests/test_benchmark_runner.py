@@ -19,6 +19,7 @@ benchmark_index_key = MODULE.benchmark_index_key
 benchmark_index_profile = MODULE.benchmark_index_profile
 build_payload = MODULE.build_payload
 compute_averages = MODULE.compute_averages
+failure_tags = MODULE.failure_tags
 load_existing_rows = MODULE.load_existing_rows
 load_evidence_store_for_companies = MODULE.load_evidence_store_for_companies
 resolve_profile_item_ids = MODULE.resolve_profile_item_ids
@@ -40,6 +41,44 @@ def test_answer_quality_scales_with_metrics():
     )
 
     assert quality == 5
+
+
+def test_answer_quality_caps_when_question_tree_is_incomplete():
+    quality = answer_quality(
+        {"required_evidence": {"min_distinct_sources": 1}},
+        {
+            "verified_claim_coverage": 0.9,
+            "unsupported_claim_rate": 0.0,
+            "required_fact_recall": 1.0,
+            "required_subquestion_coverage": 0.4,
+            "required_slot_coverage": 0.4,
+            "decision_replay_consistency": 1.0,
+        },
+        1,
+    )
+
+    assert quality == 3
+
+
+def test_failure_tags_include_unsupported_scope_when_controller_refuses_comparison():
+    tags = failure_tags(
+        {
+            "category": "comparison",
+            "required_evidence": {"min_distinct_sources": 1},
+        },
+        {
+            "verified_claim_coverage": 0.0,
+            "unsupported_claim_rate": 1.0,
+            "required_fact_recall": 0.0,
+            "scope_supported": False,
+        },
+        "",
+        [],
+        [],
+        0,
+    )
+
+    assert "A1_unsupported_scope_multi_company" in tags
 
 
 def test_retrieval_hit_detects_cited_gold_doc():
@@ -116,6 +155,8 @@ def test_build_payload_includes_per_split_summary_for_all():
     assert payload["per_split"]["dev"]["averages"] == compute_averages([rows[0]])
     assert payload["per_split"]["test"]["count"] == 1
     assert payload["per_split"]["test"]["averages"] == compute_averages([rows[1]])
+    assert "required_subquestion_coverage" in payload["averages"]
+    assert "decision_replay_consistency" in payload["averages"]
 
 
 def test_build_payload_includes_profile_target_assessment():

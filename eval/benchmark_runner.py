@@ -15,7 +15,7 @@ from typing import Any, Dict, List
 
 from agent.config import settings
 from agent.orchestrator import BizIntelAgent
-from eval.evaluator import extract_scorable_markdown, score_markdown
+from eval.evaluator import extract_scorable_markdown, score_markdown, score_research_trace
 from verification.claim_extractor import ClaimExtractor
 from verification.evidence_verifier import EvidenceVerifier
 from retrieval.hybrid_retriever import HybridRetriever
@@ -157,6 +157,12 @@ def answer_quality(item: dict, metrics: dict, matched_count: int) -> int:
         score += 1
     if verified_claim_coverage(metrics) >= 0.75 and metrics["unsupported_claim_rate"] <= 0.2:
         score = min(score + 1, 5)
+    if metrics.get("required_subquestion_coverage", 1.0) < 0.5:
+        score = min(score, 3)
+    if metrics.get("required_slot_coverage", 1.0) < 0.5:
+        score = min(score, 3)
+    if metrics.get("decision_replay_consistency", 1.0) < 1.0:
+        score = min(score, 4)
     return min(score, 5)
 
 
@@ -176,6 +182,18 @@ def failure_tags(item: dict, metrics: dict, memo_markdown: str, gold_entries: Li
         tags.append("V4_conflict_not_detected")
     if matched_count < item["required_evidence"]["min_distinct_sources"]:
         tags.append("R1_missing_primary_source")
+    if metrics.get("required_subquestion_coverage") is not None and metrics["required_subquestion_coverage"] < 0.5:
+        tags.append("S1_question_tree_incomplete")
+    if metrics.get("required_slot_coverage") is not None and metrics["required_slot_coverage"] < 0.5:
+        tags.append("S1_missing_required_slot")
+    if metrics.get("decision_replay_consistency") is not None and metrics["decision_replay_consistency"] < 1.0:
+        tags.append("A2_replay_inconsistent")
+    if metrics.get("wrong_entity_rate", 0.0) > 0.0:
+        tags.append("R2_entity_leakage")
+    if metrics.get("wrong_period_rate", 0.0) > 0.2:
+        tags.append("S4_temporal_confusion")
+    if metrics.get("scope_supported") is False:
+        tags.append("A1_unsupported_scope_multi_company")
     return sorted(set(tags))
 
 
@@ -338,6 +356,16 @@ def compute_averages(rows: List[dict]) -> dict:
             "required_fact_recall": 0.0,
             "avg_nli_score": 0.0,
             "answer_quality": 0.0,
+            "subquestion_completion_rate": 0.0,
+            "required_subquestion_coverage": 0.0,
+            "required_slot_coverage": 0.0,
+            "decision_trace_coverage": 0.0,
+            "decision_replay_consistency": 0.0,
+            "refused_subquestion_rate": 0.0,
+            "hard_fact_completion_rate": 0.0,
+            "semantic_completion_rate": 0.0,
+            "wrong_entity_rate": 0.0,
+            "wrong_period_rate": 0.0,
         }
     return {
         "retrieval_hit": sum(row.get("retrieval_hit", 0.0) for row in rows) / len(rows),
@@ -347,6 +375,16 @@ def compute_averages(rows: List[dict]) -> dict:
         "required_fact_recall": sum(row.get("required_fact_recall", 0.0) for row in rows) / len(rows),
         "avg_nli_score": sum(row.get("avg_nli_score", 0.0) for row in rows) / len(rows),
         "answer_quality": sum(row.get("answer_quality", 0.0) for row in rows) / len(rows),
+        "subquestion_completion_rate": sum(row.get("subquestion_completion_rate", 0.0) for row in rows) / len(rows),
+        "required_subquestion_coverage": sum(row.get("required_subquestion_coverage", 0.0) for row in rows) / len(rows),
+        "required_slot_coverage": sum(row.get("required_slot_coverage", 0.0) for row in rows) / len(rows),
+        "decision_trace_coverage": sum(row.get("decision_trace_coverage", 0.0) for row in rows) / len(rows),
+        "decision_replay_consistency": sum(row.get("decision_replay_consistency", 0.0) for row in rows) / len(rows),
+        "refused_subquestion_rate": sum(row.get("refused_subquestion_rate", 0.0) for row in rows) / len(rows),
+        "hard_fact_completion_rate": sum(row.get("hard_fact_completion_rate", 0.0) for row in rows) / len(rows),
+        "semantic_completion_rate": sum(row.get("semantic_completion_rate", 0.0) for row in rows) / len(rows),
+        "wrong_entity_rate": sum(row.get("wrong_entity_rate", 0.0) for row in rows) / len(rows),
+        "wrong_period_rate": sum(row.get("wrong_period_rate", 0.0) for row in rows) / len(rows),
     }
 
 
@@ -487,8 +525,17 @@ def run(
             extractor=extractor,
             verifier=verifier,
         )
+        research_metrics = score_research_trace(
+            result,
+            build_required_facts(answer_row),
+            expected_companies=item_companies,
+            target_periods=item.get("target_periods", []),
+        )
+        combined_metrics = {**metrics, **research_metrics}
         matched_count = len(matched_gold_docs(gold_entries, scorable_markdown, source_ids))
         min_sources = item["required_evidence"]["min_distinct_sources"]
+        scope_supported = result["memo_object"].contract.get("scope_supported", True)
+        combined_metrics["scope_supported"] = scope_supported
         row = {
             "run_id": f"benchmark_{version}_{split}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
             "item_id": item_id,
@@ -503,8 +550,20 @@ def run(
             "unsupported_claim_rate": metrics["unsupported_claim_rate"],
             "required_fact_recall": metrics["required_fact_recall"],
             "avg_nli_score": metrics["avg_nli_score"],
-            "answer_quality": answer_quality(item, metrics, matched_count),
-            "failure_tags": failure_tags(item, metrics, scorable_markdown, gold_entries, source_ids, matched_count),
+            "subquestion_completion_rate": research_metrics["subquestion_completion_rate"],
+            "required_subquestion_coverage": research_metrics["required_subquestion_coverage"],
+            "required_slot_coverage": research_metrics["required_slot_coverage"],
+            "decision_trace_coverage": research_metrics["decision_trace_coverage"],
+            "decision_replay_consistency": research_metrics["decision_replay_consistency"],
+            "refused_subquestion_rate": research_metrics["refused_subquestion_rate"],
+            "hard_fact_completion_rate": research_metrics["hard_fact_completion_rate"],
+            "semantic_completion_rate": research_metrics["semantic_completion_rate"],
+            "wrong_entity_rate": research_metrics["wrong_entity_rate"],
+            "wrong_period_rate": research_metrics["wrong_period_rate"],
+            "controller_failure_reasons": research_metrics["controller_failure_reasons"],
+            "scope_supported": scope_supported,
+            "answer_quality": answer_quality(item, combined_metrics, matched_count),
+            "failure_tags": failure_tags(item, combined_metrics, scorable_markdown, gold_entries, source_ids, matched_count),
             "query": item["query"],
             "item_companies": item_companies,
             "sources_used": source_ids,

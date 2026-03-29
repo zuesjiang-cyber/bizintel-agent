@@ -8,10 +8,10 @@ class FakeRetriever:
         self.mapping = mapping
         self.calls = []
 
-    def retrieve_with_trace(self, query, top_k=10, mode="full_hybrid"):
-        self.calls.append(query)
+    def retrieve_with_trace(self, query, top_k=10, mode="full_hybrid", filters=None, strategy=None):
+        self.calls.append({"query": query, "filters": filters, "strategy": strategy})
         chunks = self.mapping.get(query, [])
-        return chunks, {"query": query, "returned": len(chunks)}
+        return chunks, {"query": query, "returned": len(chunks), "filters": filters, "strategy": strategy}
 
 
 def _chunk(chunk_id: str, text: str, source_id: str = "src1") -> RetrievedChunk:

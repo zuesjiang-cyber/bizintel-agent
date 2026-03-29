@@ -1,218 +1,346 @@
-# 证据驱动可验证的企业财务研究Agent Flow: 完整技术文档 (Architecture & Technical Reference)
+# 深度研究型可信财务 RAG Agent 架构
 
-证据驱动可验证的企业财务研究Agent Flow 是一个用于自动化商业智能与研究报告生成的 AI 系统。本文档详细说明了系统的整体架构、核心模块、数据流向以及主要数据结构。
+这份文档描述当前代码已经实现的主干，而不是历史版本的规划图。
 
-## 1. 系统架构概览 (System Architecture)
+## 1. 系统目标
 
-系统采用模块化设计，分为五个核心层：**数据入口层 (Ingestion)**、**检索层 (Retrieval)**、**流程编排层 (Agent Workflow)**、**生成与验证层 (Synthesis & Verification)**、和 **呈现层 (Presentation)**。
+系统目标不是“写得像分析师”，而是：
+
+- 在固定资料包内完成一轮受约束的研究
+- 让每个关键结论都能回到证据
+- 在证据不足时补查或拒答
+- 把研究路径完整记录下来，便于复盘和评测
+
+## 2. 架构总览
 
 ```mermaid
-graph TD
-    %% Presentation Layer
-    subgraph Presentation["前端与接口层 (Presentation)"]
-        CLI[run.py CLI]
-        UI[app/streamlit_app.py]
-        Orchestrator[agent/orchestrator.py]
-    end
+flowchart TD
+    User["研究请求"] --> Entry["CLI / Streamlit / Demo"]
+    Entry --> Orchestrator["BizIntelAgent"]
+    Orchestrator --> Controller["ResearchController"]
 
-    %% Workflow Layer
-    subgraph Agent["Agent 编排与规划层 (Workflow)"]
-        Planner[agent/planner.py]
-        Engine[agent/workflow_engine.py]
-        Executor[agent/executor.py]
-    end
+    Controller --> Task["ResearchTask"]
+    Task --> Tree["ResearchSubquestion Tree"]
 
-    %% Synthesis & Verification Layer
-    subgraph Synthesis["生成与核实层 (Synthesis & Verification)"]
-        LLM[(OpenAI LLM)]
-        Writer[agent/report_writer.py]
-        ClaimExt[verification/claim_extractor.py]
-        Verifier[verification/evidence_verifier.py]
-        NLI[(DeBERTa NLI Model)]
-    end
+    Tree --> HF["Hard-Fact Lane"]
+    Tree --> SM["Semantic Lane"]
 
-    %% Retrieval Layer
-    subgraph Retrieval["混合检索层 (Hybrid Retrieval)"]
-        HybridSearch[retrieval/hybrid_retriever.py]
-        BM25[Rank-BM25]
-        Dense[BAAI/bge-base-en]
-        CrossReranker[MS-MARCO Cross-Encoder]
-    end
+    HF --> RetrieverHF["HybridRetriever\nhard_fact strategy"]
+    SM --> RetrieverSM["HybridRetriever\nsemantic strategy"]
 
-    %% Data Layer
-    subgraph Data["数据与索引层 (Data & Index)"]
-        ChunksJSON[data/index/chunks.json]
-        DenseEmb[data/index/dense_embeddings.npy]
-    end
+    RetrieverHF --> Assess["EvidenceAssessment"]
+    RetrieverSM --> Assess
 
-    %% Data Ingestion Pathway (Offline)
-    subgraph Ingestion["数据清洗与录入 (Offline Ingestion)"]
-        RawDocs[Raw JSON/TXT/PDF]
-        DocParser[tools/doc_parser.py]
-        Chunker[retrieval/chunking.py]
-        IngestScript[retrieval/ingest.py]
-        IndexScript[retrieval/build_index.py]
-    end
+    Assess --> Followup["Follow-up Policy"]
+    Followup --> Tree
 
-    %% Relationships
-    CLI --> Orchestrator
-    UI --> Orchestrator
-    Orchestrator --> Planner
-    Orchestrator --> Executor
-    Orchestrator --> Writer
-
-    Planner --> LLM
-    Planner --> Engine
-    
-    Engine --> Executor
-    Executor --> HybridSearch
-    Executor --> LLM
-    
-    HybridSearch --> BM25
-    HybridSearch --> Dense
-    HybridSearch --> CrossReranker
-    BM25 --> ChunksJSON
-    Dense --> DenseEmb
-
-    Writer --> ClaimExt
-    ClaimExt --> Verifier
-    Verifier --> NLI
-
-    RawDocs --> DocParser --> Chunker --> IngestScript --> IndexScript --> Data
+    Assess --> Answer["Batch Answer Generation"]
+    Answer --> Verify["Claim Extractor + EvidenceVerifier"]
+    Verify --> Gate["Report Gating"]
+    Gate --> Memo["GeneratedMemo"]
+    Memo --> Artifacts["memo.md / trace.json / summary.json / verification.csv"]
 ```
 
----
+## 3. 主对象
 
-## 2. 核心模块详解 (Core Modules)
+### `ResearchTask`
 
-### 2.1 数据摄取层 (Data Ingestion)
-负责将非结构化数据转化为可检索的标准格式。
-- **`tools/doc_parser.py`**: 解析不同格式的文件 (TXT, JSON, PDF)，提取元数据 (`DocumentMeta`)。
-- **`retrieval/chunking.py`**: `TextChunker` 将长篇文本切分为固定 token 大小的片段 (默认 400 tokens，50 tokens 重叠)，保留上下文边界。
-- **`retrieval/ingest.py`**: 批量将源文件转换为 JSON Chunk 数组。
-- **`retrieval/build_index.py`**: 为摄取的数据建立检索索引。
+研究请求的根对象，包含：
 
-### 2.2 混合检索引擎 (Hybrid Retrieval)
-文件: `retrieval/hybrid_retriever.py`
+- `query`
+- `company_id`
+- `period`
+- `mode`
+- 预算约束：
+  - `max_subquestions`
+  - `max_followup_rounds`
+  - `max_evidence_per_question`
+  - `llm_call_budget`
 
-采用工业级的三阶段检索范式，最大化召回率和准确率：
-1. **词汇匹配 (Lexical Search)**: 使用 `Rank-BM25` 匹配关键词。
-2. **语义匹配 (Semantic Search)**: 使用 `BAAI/bge-base-en-v1.5` 生成 Dense Embeddings，计算余弦相似度。
-3. **融合排序 (RRF Fusion)**: 使用 Reciprocal Rank Fusion 公式将 BM25 和 Dense 的排位融合。
-4. **深度重排 (Cross-Encoder Reranking)**: 取前 20 个候选 chunk，送入 `cross-encoder/ms-marco-MiniLM-L-6-v2` 计算精准匹配得分，最终返回 Top K。
+### `ResearchSubquestion`
 
-### 2.3 Agent 与工作流引擎 (Agent & Workflow Engine)
-管理大模型的思考和执行路径。
-- **`agent/planner.py`** (`Planner`, `QueryClassifier`): 
-  - 接收用户查询，判断属于公司、行业还是竞品分析模式 (`AnalysisMode`)。
-  - 从 `agent/schemas.py` 加载对应的分析框架（包含必选/可选步骤）。
-  - 调用 LLM 为每一步骤生成具体的搜索查询语句（Search Queries）。
-- **`agent/workflow_engine.py`** (`WorkflowEngine`, `WorkflowNode`):
-  - 实现了一个支持拓扑执行、自动重试和超时的状态机。
-  - 每个分析步骤对应一个 `WorkflowNode`。
-- **`agent/executor.py`** (`AnalysisExecutor`):
-  - 将 Planner 的步骤交给 Workflow Engine 执行。
-  - 负责在每一步调用 `HybridRetriever` 获取 Context，并拼装 Prompt 给 LLM 生成当步的分析结果。
+原子研究问题，至少包含：
 
-### 2.4 幻觉控制与验证层 (Factual Verification)
-本项目核心亮点：防止 LLM “一本正经地胡说八道”。
-- **`verification/claim_extractor.py`** (`ClaimExtractor`): 
-  - 通过正则和启发式规则，从大模型生成的文本中剥离出“陈述性断言 (Claim)”。
-  - 自动提取文本中的引用 `[Source: xxx]` 和数值 (Numbers)。
-- **`verification/evidence_verifier.py`** (`EvidenceVerifier`):
-  - 将提取出的 Claim 与被引用的原始 Chunk 送入 NLI (Natural Language Inference) 模型 (`cross-encoder/nli-deberta-v3-base`)。
-  - 通过判断前提 (Evidence) 是否蕴含 (Entailment) 假设 (Claim)，计算事实置信度 (`ConfidenceLevel`: STRONG / MODERATE / WEAK / UNSUPPORTED)。
-  - 对包含数字的 Claim 进行额外的数值比对验证。
+- `question_id`
+- `text`
+- `lane`
+- `priority`
+- `fact_slot`
+- `metric_family`
+- `required_period`
+- `allowed_source_types`
+- `needs_numeric_verification`
+- `status`
+- `rounds_used`
 
-### 2.5 报告生成层 (Report Generation)
-文件: `agent/report_writer.py`
-- 将执行层产出的各个零散 Section 进行组装。
-- 注入 Verification Results 生成全篇评估指标。
-- 调用 LLM 生成 Executive Summary。
-- 提供 `render_memo()` 将内部结构 `GeneratedMemo` 渲染为美观的 Markdown，供 CLI 和 Streamlit 展现。
+### `ResearchQuestionResult`
 
----
+单个子问题的执行结果：
 
-## 3. 主要数据结构 (Data Schemas)
-系统大量使用 Enum 和 Pydantic/Dataclasses 以保证类型安全 (`agent/schemas.py`)。
+- 子问题元数据
+- 命中的证据块
+- 每轮证据评估
+- 最终答案
+- 验证结果
+- 拒答原因
+- follow-up 查询
+- 完整 trace
 
-- **`DocumentMeta`**: 记录来源元数据（标题、URL、日期、唯一 source_id）。
-- **`TextChunk`**: 记录切割后的文本及关联的 `source_id`。
-- **`RetrievedChunk`**: 继承自 `TextChunk`，额外记录检索阶段的得分 (BM25_rank, Dense_rank, Rerank_score)。
-- **`AnalysisPlan`**: 包含用户 Query、模式 (`AnalysisMode`) 以及分解出的若干个 `AnalysisStep`。
-- **`AnalysisStep`**: 包含步骤名称、描述、大模型为这步生成的具体搜索关键词列表。
-- **`Claim`**: 结构化的知识断言。包含被引用的 Sources 和解析出的 Numbers。
-- **`VerificationResult`**: 验证报告，包含 Claim 本身、NLI 分数、`ConfidenceLevel` 及解释说明。
+### `ResearchReplayRecord`
 
----
+控制器级回放对象：
 
-## 4. 关键交互流程规范 (Sequence of Operations)
+- 原始任务
+- 子问题状态快照
+- 决策记录
+- LLM 调用计数
 
-1. **输入阶段**: 用户通过 Streamlit 或命令行提供一句 Prompt (`Query`)。
-2. **制定计划 (Plan)**: 
-   - `Orchestrator` 将 `Query` 传给 `Planner`。
-   - `Planner` 确定分析模式 (例如 `COMPANY_PROFILE`) 并载入子任务列表 (如: "概况", "财务", "竞对")。
-   - `Planner` 为"财务"子任务生成具体的搜索词 (e.g., ["Stripe round valuations", "Stripe revenue 2023"])。
-3. **执行流程 (Execute)**: 
-   - `AnalysisExecutor` 遍历计划中的子任务。
-   - 对"财务"任务的每一个搜索词，调用 `HybridRetriever` 拉取最佳的十个 `RetrievedChunk`。
-   - 将检索到的原文拼接成 Context 送入 OpenAI API，附上当前的发现和前置上下文，生成当步内容。
-4. **事实核验 (Verify)**:
-   - 任务完成后，`ReportWriter` 获取各步的输出。
-   - `ClaimExtractor` 切分句子，找到如 "Stripe was valued at $50B [Source: stripe_profile]" 的句子。
-   - `EvidenceVerifier` 拉取 `stripe_profile` 的相应 Chunk 送给 NLI 打分。
-5. **输出渲染 (Render)**:
-   - 计算得到文章事实支持率 (Citation Coverage)。
-   - 聚合生成 Executive Summary，统一格式化 Markdown，传给 UI 侧渲染。
+## 4. 研究控制器
 
----
+控制器位于 [research_controller.py](/Users/jiang/Documents/cv%20project/bizintel-agent/agent/research_controller.py)。
 
-## 5. 目录组织 (Directory Structure)
+它负责：
 
-```text
-bizintel-agent/
-├── agent/                  # 核心智能体与工作流框架
-│   ├── config.py           # 环境变量与默认配置 (pydantic-settings)
-│   ├── executor.py         # 串联 Retrieval 与 LLM 生成
-│   ├── orchestrator.py     # 顶层外观模式，对外暴露 research 接口
-│   ├── planner.py          # 任务拆解与意图分类
-│   ├── report_writer.py    # 组装最终结果与排版
-│   ├── schemas.py          # 全局数据模型
-│   ├── workflow_engine.py  # 节点状态机
-│   └── prompts/            # LLM 提示词模板
-│       └── synthesis.py    
-├── app/                    # 展现层
-│   └── streamlit_app.py    # Web 交互界面
-├── data/                   # 本地数据库与语料
-│   ├── index/              # 构建的稠密与稀疏检索索引
-│   ├── processed/          # 完成 chunk化 的知识单元
-│   ├── company_packs/      # 原始公司资料存放处
-│   └── eval_cases/         # 测试题库
-├── docs/                   # 相关文档
-│   └── architecture.md     # 本文档
-├── eval/                   # 系统评测脚本
-│   └── evaluator.py        # 基于 benchmark.json 的准确率测试
-├── retrieval/              # 数据清洗与搜索引擎框架
-│   ├── build_index.py      # 构建离线搜索索引脚本
-│   ├── chunking.py         # 智能滑动窗口分块
-│   ├── hybrid_retriever.py # 多路召回重排引擎
-│   └── ingest.py           # 数据入库脚本
-├── tests/                  # Pytest 单元测试
-├── tools/                  
-│   └── doc_parser.py       # 多模态解析(JSON/PDF/TXT)
-├── pyproject.toml          # 项目包依赖管理
-└── run.py                  # CLI 主入口
+- 拆分子问题
+- 强制通道归类
+- 分组执行
+- 证据评估
+- 发起补查
+- 记录决策
+- 最终汇总
+
+它不负责：
+
+- 绕过检索边界
+- 越过验证直接写结论
+- 自主扩大公司或时期范围
+
+## 5. 子问题状态机
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending
+    pending --> retrieving: create initial queries
+    retrieving --> completed: sufficient evidence
+    retrieving --> needs_followup: insufficient evidence
+    retrieving --> conflict: conflicting evidence
+    conflict --> needs_followup: generate tighter queries
+    needs_followup --> retrieving: run next round
+    needs_followup --> refused: budget exhausted or no legal strategy
+    completed --> [*]
+    refused --> [*]
 ```
 
-## 6. 模型与依赖 (Models & Dependencies)
-为了平衡速度与开销，默认采用了如下模型栈（均在 `agent/config.py` 中配置）：
-- **LLM**: `gpt-4o` (OpenAI 负责规划与报告生成)
-- **Embedding**: `BAAI/bge-base-en-v1.5` (本地，SentenceTransformers 负责语义向量化)
-- **Reranker**: `cross-encoder/ms-marco-MiniLM-L-6-v2` (本地，SentenceTransformers 负责重排精确打击)
-- **NLI/Verification**: `cross-encoder/nli-deberta-v3-base` (本地，负责幻觉检测)
+### 状态含义
 
-### 依赖库
-核心三方依赖记录于 `pyproject.toml`：
-- `openai`, `sentence-transformers`, `rank-bm25`, `pdfplumber` (解析处理)
-- `streamlit`, `fastapi`, `pydantic`, `pydantic-settings` (Web 与数据验证)
-- `pytest`, `ruff` (工程化)
+- `pending`
+  还没开始执行
+
+- `retrieving`
+  正在当前轮次检索
+
+- `needs_followup`
+  当前轮证据不足，但还允许补查
+
+- `conflict`
+  同时期、同口径、同指标下出现冲突证据
+
+- `completed`
+  达到证据门槛
+
+- `refused`
+  预算耗尽或没有合法补查策略
+
+## 6. 智能与规则边界
+
+### 用模型的地方
+
+- 主问题拆分为子问题
+- 分批生成子问题答案
+- 最终总结
+- 冲突/不足场景下的少量查询改写建议
+
+### 必须规则化的地方
+
+- 通道修正
+- 状态转移
+- 是否允许补查
+- 是否拒答
+- 公司 / 时期 / 来源过滤
+- 硬事实排序
+
+控制器可以建议，但不能越过规则护栏。
+
+## 7. 双通道检索
+
+检索入口位于 [hybrid_retriever.py](/Users/jiang/Documents/cv%20project/bizintel-agent/retrieval/hybrid_retriever.py)。
+
+### 硬事实通道
+
+目标：
+
+- 收入
+- 利润率
+- 现金流
+- 同比 / 环比
+- 其他明确数字问题
+
+排序逻辑：
+
+1. 公司匹配
+2. 时期匹配
+3. 指标/口径命中
+4. 数字命中
+5. 内容类型
+6. 来源可信度
+7. reranker 末端微调
+
+这条链路里，语义重排不是事实边界裁判，只是细排器。
+
+### 定性通道
+
+目标：
+
+- 管理层态度
+- 风险
+- 驱动
+- 战略
+
+排序逻辑：
+
+1. 公司/时期/来源硬过滤
+2. BM25 + dense 混合召回
+3. rerank
+4. 同桶安全聚合
+
+## 8. 证据评估
+
+控制器用 `EvidenceAssessment` 判定一个子问题当前轮是否充分、冲突或不足。
+
+### 硬事实充分
+
+- 至少一个合法证据块
+- 命中目标指标或数字
+- 最佳蕴含分数达到阈值
+
+### 定性充分
+
+- 至少两个合法证据块
+- 平均蕴含分数达到阈值
+- 至少一个高可信来源
+
+### 冲突
+
+- 高相关证据指向相反结论
+- 或同指标数字不一致
+- 且不能被时期/口径差异解释
+
+## 9. Follow-up 机制
+
+补查策略有两层：
+
+### 规则补查
+
+- 硬事实：
+  - `reported metric`
+  - `numeric evidence`
+  - `exact reported figure`
+  - `gaap adjusted reconciliation`
+
+- 定性：
+  - `management commentary`
+  - `source discussion`
+
+### 有预算时的 LLM 反思
+
+只在冲突场景下使用，用来提出更紧的 follow-up 查询。  
+输出仍需通过规则边界校验。
+
+## 10. 生成与核验
+
+### 生成
+
+控制器按通道分批生成子问题答案，而不是直接对整题写长文。
+
+每个答案必须：
+
+- 绑定证据
+- 使用 `[Chunk: ...]` 和 `[Source: ...]`
+- 不引入输入证据外的事实
+
+### 核验
+
+核验路径：
+
+1. `ClaimExtractor`
+2. `EvidenceVerifier`
+3. `ReportWriter` gating
+
+失败的数字型句子不会进入最终正文。
+
+## 11. 最终 memo 结构
+
+当前汇总器会输出三个主要 section：
+
+- `hard_fact_findings`
+- `semantic_findings`
+- `evidence_gaps`
+
+并生成：
+
+- `executive_summary`
+- `contract`
+- `sources`
+- `overall_confidence`
+
+## 12. Trace 与导出
+
+导出由 [artifacts.py](/Users/jiang/Documents/cv%20project/bizintel-agent/agent/artifacts.py) 负责。
+
+`trace.json` 当前包含：
+
+- 研究模式
+- 原始 query
+- 研究树
+- 每个子问题的 trace
+- 决策记录
+- 最终答案
+- claim 级验证行
+- LLM 调用数
+
+这也是 benchmark 读取控制器级指标的基础。
+
+## 13. Benchmark 对齐
+
+旧 benchmark 只关心整题写作；现在评测层已经扩展到控制器本身。
+
+新增指标：
+
+- `subquestion_completion_rate`
+- `required_subquestion_coverage`
+- `required_slot_coverage`
+- `decision_trace_coverage`
+- `decision_replay_consistency`
+- `refused_subquestion_rate`
+- `hard_fact_completion_rate`
+- `semantic_completion_rate`
+- `wrong_entity_rate`
+- `wrong_period_rate`
+
+传统指标仍保留，用来和旧 runs 对比：
+
+- `retrieval_hit`
+- `verified_claim_coverage`
+- `unsupported_claim_rate`
+- `required_fact_recall`
+- `answer_quality`
+
+## 14. 当前边界
+
+这份架构已经完成了从旧 section-workflow 到研究控制器主路径的迁移，但还要明确边界：
+
+- 当前主路径优先支持单公司研究。
+- 多公司自由比较还不是这一版的承诺能力。
+- benchmark 中保留的 comparison 题，当前更像压力测试，而不是产品承诺。
+
+这不是缺文案，而是产品边界。

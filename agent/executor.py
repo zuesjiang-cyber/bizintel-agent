@@ -172,10 +172,12 @@ class AnalysisExecutor:
         for round_idx in range(max(1, int(settings.retrieval_gap_max_rounds))):
             round_retrieved: List[RetrievedChunk] = []
             for query in queries:
+                retrieval_filters = self._filters_for_query(step, query)
                 retrieved, trace = self.retriever.retrieve_with_trace(
                     query,
                     top_k=settings.retrieval_top_k,
                     mode=settings.retrieval_mode,
+                    filters=retrieval_filters,
                 )
                 round_retrieved.extend(retrieved)
                 retrieval_trace.append(trace)
@@ -222,6 +224,19 @@ class AnalysisExecutor:
             "gap_reflection": latest_gap_reflection,
             "iterations": iterations,
         }
+
+    def _filters_for_query(self, step: AnalysisStep, query: str) -> dict:
+        normalized_query = (query or "").strip().lower()
+        for contract in step.query_contracts or []:
+            if (contract.get("query_text") or "").strip().lower() != normalized_query:
+                continue
+            filters = contract.get("filters") or {}
+            return {
+                "companies": list(filters.get("companies", [])),
+                "periods": list(filters.get("periods", [])),
+                "source_types": list(filters.get("source_types", [])),
+            }
+        return {"companies": [], "periods": [], "source_types": []}
 
     def _build_gap_queries(
         self,

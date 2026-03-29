@@ -355,6 +355,35 @@ class EvidenceVerifier:
 
         return final_results
 
+    def score_hypothesis_against_chunks(self, hypothesis: str, chunks: List[object]) -> List[dict]:
+        normalized_chunks = self._normalize_evidence_chunks("anonymous_source", chunks)
+        if not normalized_chunks:
+            return []
+
+        model = self._get_model()
+        pairs = [(chunk["text"], hypothesis) for chunk in normalized_chunks]
+        scores = self._predict_pairs(model, pairs)
+        if scores.ndim == 1:
+            scores = np.expand_dims(scores, axis=0)
+        exp_scores = np.exp(scores - np.max(scores, axis=1, keepdims=True))
+        probs = exp_scores / np.sum(exp_scores, axis=1, keepdims=True)
+
+        results = []
+        for chunk, row in zip(normalized_chunks, probs):
+            results.append(
+                {
+                    "chunk_id": chunk["chunk_id"],
+                    "source_id": chunk["source_id"],
+                    "text": chunk["text"],
+                    "source_type": chunk.get("source_type"),
+                    "is_primary": chunk.get("is_primary"),
+                    "contradiction": float(row[0]),
+                    "entailment": float(row[1]),
+                    "neutral": float(row[2]),
+                }
+            )
+        return results
+
     def _has_primary_source(self, evidence: Optional[dict]) -> Optional[bool]:
         if evidence is None:
             return None

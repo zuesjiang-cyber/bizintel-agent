@@ -1,5 +1,6 @@
 import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
 
 
 EVALUATOR_PATH = Path(__file__).resolve().parents[1] / "eval" / "evaluator.py"
@@ -11,6 +12,7 @@ SPEC.loader.exec_module(MODULE)
 required_fact_recall = MODULE.required_fact_recall
 extract_scorable_markdown = MODULE.extract_scorable_markdown
 score_markdown = MODULE.score_markdown
+score_research_trace = MODULE.score_research_trace
 
 
 def test_required_fact_recall_counts_present_facts():
@@ -167,3 +169,66 @@ def test_score_markdown_uses_fallback_extraction_for_cited_bullet_fragments():
 
     assert metrics["total_claims"] == 1
     assert metrics["unsupported_claim_rate"] < 1.0
+
+
+def test_score_research_trace_reports_completion_and_slot_coverage():
+    result = {
+        "subquestion_results": [
+            SimpleNamespace(
+                status="completed",
+                refusal_reason=None,
+                answer_text="Revenue was $10 million.",
+                supported_content="Revenue was $10 million.",
+                evidence=[
+                    SimpleNamespace(company="fastly", period="2025Q4"),
+                    SimpleNamespace(company="fastly", period="2025Q4"),
+                ],
+                subquestion=SimpleNamespace(
+                    question_id="q1",
+                    required=True,
+                    lane="hard_fact",
+                    fact_slot="reported revenue",
+                    metric_family="revenue",
+                    text="What was reported revenue?",
+                ),
+            ),
+            SimpleNamespace(
+                status="refused",
+                refusal_reason="No high-trust semantic evidence.",
+                answer_text="",
+                supported_content="",
+                evidence=[SimpleNamespace(company="fastly", period="2025Q4")],
+                subquestion=SimpleNamespace(
+                    question_id="q2",
+                    required=True,
+                    lane="semantic",
+                    fact_slot="management demand commentary",
+                    metric_family="management",
+                    text="What demand commentary did management provide?",
+                ),
+            ),
+        ],
+        "research_trace": SimpleNamespace(
+            subquestions=[
+                SimpleNamespace(question_id="q1", status="completed"),
+                SimpleNamespace(question_id="q2", status="refused"),
+            ],
+            decisions=[
+                SimpleNamespace(question_id="q1"),
+                SimpleNamespace(question_id="q2"),
+            ],
+        ),
+    }
+
+    metrics = score_research_trace(
+        result,
+        ["reported revenue", "management demand commentary"],
+        expected_companies=["fastly"],
+        target_periods=["2025Q4"],
+    )
+
+    assert metrics["subquestion_completion_rate"] == 0.5
+    assert metrics["required_subquestion_coverage"] == 0.5
+    assert metrics["required_slot_coverage"] == 0.5
+    assert metrics["decision_replay_consistency"] == 1.0
+    assert metrics["controller_failure_reasons"] == ["No high-trust semantic evidence."]

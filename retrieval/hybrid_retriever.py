@@ -148,6 +148,7 @@ class HybridRetriever:
             except Exception as exc:
                 logger.warning("Falling back to dummy embedding encoder because model loading failed: %s", exc)
                 self.encoder = _DummyEncoder()
+                _ENCODER_CACHE[(embedding_model, self.device)] = self.encoder
         else:
             self.encoder = _DummyEncoder()
 
@@ -161,6 +162,7 @@ class HybridRetriever:
             except Exception as exc:
                 logger.warning("Falling back to dummy reranker because model loading failed: %s", exc)
                 self.reranker = _DummyReranker()
+                _RERANKER_CACHE[(reranker_model, self.device)] = self.reranker
         else:
             self.reranker = _DummyReranker()
 

@@ -20,17 +20,24 @@ answer_quality = MODULE.answer_quality
 assess_target_metrics = MODULE.assess_target_metrics
 benchmark_index_key = MODULE.benchmark_index_key
 benchmark_index_profile = MODULE.benchmark_index_profile
+benchmark_artifact_root = MODULE.benchmark_artifact_root
 build_payload = MODULE.build_payload
 compute_averages = MODULE.compute_averages
 failure_tags = MODULE.failure_tags
 is_retryable_live_error = MODULE.is_retryable_live_error
 load_existing_rows = MODULE.load_existing_rows
 load_evidence_store_for_companies = MODULE.load_evidence_store_for_companies
+clear_accelerator_cache = MODULE.clear_accelerator_cache
+render_benchmark_case_report = MODULE.render_benchmark_case_report
+render_benchmark_report = MODULE.render_benchmark_report
 resolve_profile_item_ids = MODULE.resolve_profile_item_ids
 requested_item_ids = MODULE.requested_item_ids
 retrieval_hit = MODULE.retrieval_hit
 selection_item_ids = MODULE.selection_item_ids
+resolve_item_split_label = MODULE.resolve_item_split_label
+find_missing_item_ids = MODULE.find_missing_item_ids
 validate_profile_items = MODULE.validate_profile_items
+write_case_artifacts = MODULE.write_case_artifacts
 
 
 def test_answer_quality_scales_with_metrics():
@@ -64,6 +71,46 @@ def test_answer_quality_caps_when_question_tree_is_incomplete():
     assert quality == 3
 
 
+def test_answer_quality_caps_when_gold_numeric_answer_misses():
+    quality = answer_quality(
+        {"required_evidence": {"min_distinct_sources": 1}},
+        {
+            "verified_claim_coverage": 1.0,
+            "unsupported_claim_rate": 0.0,
+            "required_fact_recall": 1.0,
+            "required_subquestion_coverage": 1.0,
+            "required_slot_coverage": 1.0,
+            "decision_replay_consistency": 1.0,
+            "gold_answer_mode": "numeric_exact",
+            "gold_answer_hit": 0.0,
+            "gold_numeric_hit": 0.0,
+        },
+        1,
+    )
+
+    assert quality == 3
+
+
+def test_answer_quality_does_not_cap_on_exact_gold_miss_when_trust_metrics_hold():
+    quality = answer_quality(
+        {"required_evidence": {"min_distinct_sources": 1}},
+        {
+            "verified_claim_coverage": 1.0,
+            "unsupported_claim_rate": 0.0,
+            "required_fact_recall": 1.0,
+            "required_subquestion_coverage": 1.0,
+            "required_slot_coverage": 1.0,
+            "decision_replay_consistency": 1.0,
+            "gold_answer_mode": "semantic_gold_answer",
+            "gold_answer_hit": 0.0,
+            "gold_semantic_hit": 1.0,
+        },
+        1,
+    )
+
+    assert quality == 5
+
+
 def test_failure_tags_include_unsupported_scope_when_controller_refuses_comparison():
     tags = failure_tags(
         {
@@ -83,6 +130,33 @@ def test_failure_tags_include_unsupported_scope_when_controller_refuses_comparis
     )
 
     assert "A1_unsupported_scope_multi_company" in tags
+
+
+def test_failure_tags_include_gold_answer_miss_for_mapped_external_item():
+    tags = failure_tags(
+        {
+            "category": "company_overview",
+            "required_evidence": {"min_distinct_sources": 1},
+        },
+        {
+            "verified_claim_coverage": 1.0,
+            "unsupported_claim_rate": 0.0,
+            "required_fact_recall": 1.0,
+            "gold_answer_mode": "numeric_exact",
+            "gold_answer_hit": 0.0,
+            "gold_numeric_hit": 0.0,
+            "gold_citation_hit": 0.0,
+            "gold_semantic_hit": 0.0,
+        },
+        "",
+        [],
+        [],
+        1,
+    )
+
+    assert "G1_gold_numeric_miss" in tags
+    assert "G1_gold_citation_miss" in tags
+    assert "G1_gold_semantic_gap" in tags
 
 
 def test_retrieval_hit_detects_cited_gold_doc():
@@ -111,6 +185,82 @@ def test_benchmark_index_profile_separates_real_and_dummy_indexes():
     assert dummy_profile.startswith("dummy__")
 
 
+def test_benchmark_artifact_root_uses_output_stem():
+    output = Path("/tmp/benchmark_live.json")
+
+    root = benchmark_artifact_root(output)
+
+    assert root == Path("/tmp/benchmark_live_artifacts")
+
+
+def test_render_benchmark_case_report_includes_metrics_and_memo():
+    report = render_benchmark_case_report(
+        {"query": "Summarize revenue", "category": "company_overview", "difficulty": "medium", "query_type": ["structured_summary"]},
+        {
+            "item_id": "BO-002",
+            "item_companies": ["fastly"],
+            "sources_used": ["fastly_q4_2025_results"],
+            "failure_tags": ["S5_overclaim"],
+            "retrieval_hit": 1,
+            "wrong_entity_rate": 0.0,
+            "wrong_period_rate": 0.0,
+            "verified_claim_coverage": 0.5,
+            "unsupported_claim_rate": 0.5,
+            "required_subquestion_coverage": 0.75,
+            "required_slot_coverage": 1.0,
+            "decision_replay_consistency": 1.0,
+        },
+        {"memo_markdown": "# Memo\n\n- Revenue was $1.0B [Chunk: c1] [Source: s1]"},
+    )
+
+    assert "# Benchmark Case BO-002" in report
+    assert "## Natural Text Memo" in report
+    assert "Revenue was $1.0B" in report
+
+
+def test_write_case_artifacts_records_paths(monkeypatch, tmp_path):
+    def fake_write_artifact_bundle(result, artifact_dir):
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        paths = {}
+        for name, filename in {
+            "memo": "memo.md",
+            "trace": "trace.json",
+            "summary": "summary.json",
+            "verification": "verification.csv",
+        }.items():
+            path = artifact_dir / filename
+            path.write_text(name, encoding="utf-8")
+            paths[name] = path
+        return paths
+
+    monkeypatch.setattr(MODULE, "write_artifact_bundle", fake_write_artifact_bundle)
+
+    paths = write_case_artifacts(
+        tmp_path / "benchmark.json",
+        {"query": "Summarize revenue", "category": "company_overview", "difficulty": "medium", "query_type": ["structured_summary"]},
+        {
+            "item_id": "BO-002",
+            "item_companies": ["fastly"],
+            "sources_used": ["fastly_q4_2025_results"],
+            "failure_tags": [],
+            "retrieval_hit": 1,
+            "wrong_entity_rate": 0.0,
+            "wrong_period_rate": 0.0,
+            "verified_claim_coverage": 1.0,
+            "unsupported_claim_rate": 0.0,
+            "required_subquestion_coverage": 1.0,
+            "required_slot_coverage": 1.0,
+            "decision_replay_consistency": 1.0,
+        },
+        {"memo_markdown": "# Memo"},
+    )
+
+    assert paths["artifact_dir"].endswith("benchmark_artifacts/BO-002")
+    assert paths["memo_path"].endswith("memo.md")
+    assert paths["report_path"].endswith("benchmark_report.md")
+    assert Path(paths["report_path"]).exists()
+
+
 def test_requested_item_ids_supports_all_split():
     splits = {
         "dev": ["BO-001", "RC-001"],
@@ -118,6 +268,12 @@ def test_requested_item_ids_supports_all_split():
     }
 
     assert requested_item_ids(splits, "all") == ["BO-001", "RC-001", "BO-002"]
+
+
+def test_find_missing_item_ids_reports_unknown_entries():
+    missing = find_missing_item_ids(["BO-001", "BO-999"], {"BO-001": {}, "BO-002": {}})
+
+    assert missing == ["BO-999"]
 
 
 def test_build_payload_includes_per_split_summary_for_all():
@@ -204,6 +360,33 @@ def test_build_payload_includes_profile_target_assessment():
     assert payload["portfolio_summary"]["item_count"] == 1
 
 
+def test_compute_averages_includes_gold_metrics():
+    averages = compute_averages(
+        [
+            {
+                "gold_answer_hit": 1.0,
+                "gold_numeric_hit": 1.0,
+                "gold_citation_hit": 0.0,
+                "gold_semantic_similarity": 0.9,
+                "gold_semantic_hit": 1.0,
+            },
+            {
+                "gold_answer_hit": 0.0,
+                "gold_numeric_hit": 1.0,
+                "gold_citation_hit": 1.0,
+                "gold_semantic_similarity": 0.4,
+                "gold_semantic_hit": 0.0,
+            },
+        ]
+    )
+
+    assert averages["gold_answer_hit"] == 0.5
+    assert averages["gold_numeric_hit"] == 1.0
+    assert averages["gold_citation_hit"] == 0.5
+    assert averages["gold_semantic_similarity"] == 0.65
+    assert averages["gold_semantic_hit"] == 0.5
+
+
 def test_resolve_profile_item_ids_uses_split_when_needed():
     profile = {"split": "dev"}
     splits = {"dev": ["NUM-001"], "test": ["BO-002"]}
@@ -219,6 +402,17 @@ def test_selection_item_ids_returns_profile():
 
     assert item_ids == ["BO-002"]
     assert profile["track"] == "showcase"
+
+
+def test_resolve_item_split_label_falls_back_to_profile_name():
+    label = resolve_item_split_label(
+        "financebench_id_03069",
+        {"NUM-001": "dev"},
+        "dev",
+        profile_name="financebench_amd_8",
+    )
+
+    assert label == "profile:financebench_amd_8"
 
 
 def test_validate_profile_items_flags_items_outside_constraints():
@@ -318,6 +512,36 @@ def test_load_evidence_store_for_companies_preserves_chunk_metadata(tmp_path, mo
 
     assert evidence_store["fastly_q4_2025_results"][0]["chunk_id"] == "chunk-001"
     assert evidence_store["fastly_q4_2025_results"][0]["text"] == "Revenue was $144.5 million."
+
+
+def test_clear_accelerator_cache_skips_mps_when_cpu_is_forced(monkeypatch):
+    class FakeMPSBackend:
+        @staticmethod
+        def is_available():
+            return True
+
+    class FakeTorch:
+        class cuda:
+            @staticmethod
+            def is_available():
+                return False
+
+        class backends:
+            mps = FakeMPSBackend()
+
+        class mps:
+            called = False
+
+            @classmethod
+            def empty_cache(cls):
+                cls.called = True
+
+    monkeypatch.setattr(MODULE, "torch", FakeTorch)
+    monkeypatch.setattr(settings, "inference_device", "cpu")
+
+    clear_accelerator_cache(skip_gc=True)
+
+    assert FakeTorch.mps.called is False
 
 
 def test_is_retryable_live_error_recognizes_provider_502_message():

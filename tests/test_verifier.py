@@ -61,6 +61,18 @@ class TestClaimExtractor:
         assert claims[0].cited_sources == ["fastly_q4"]
         assert claims[0].cited_chunks == ["c1"]
 
+    def test_extract_claim_keeps_multiple_chunk_citations(self):
+        text = (
+            "- Corporate & Investment Bank had the highest net income at $3,725 million. "
+            "[Chunk: c1] [Source: jpmorgan_2022q2_10q] "
+            "[Chunk: c2] [Source: jpmorgan_2022q2_10q]"
+        )
+        claims = self.extractor.extract_claims(text, "summary")
+
+        assert len(claims) == 1
+        assert claims[0].cited_chunks == ["c1", "c2"]
+        assert claims[0].cited_sources == ["jpmorgan_2022q2_10q", "jpmorgan_2022q2_10q"]
+
     def test_filter_insufficient_evidence_lines(self):
         text = "- Insufficient evidence in the source pack to verify this point directly."
         claims = self.extractor.extract_claims(text, "summary")
@@ -205,3 +217,168 @@ class TestEvidenceVerifier:
         assert verifier._normalize_numeric_haystack(
             "Stripe was founded in 2010 by Patrick and John Collison."
         ) == {"2010"}
+
+    def test_numeric_alignment_accepts_derived_quick_ratio_from_primary_line_items(self):
+        verifier = EvidenceVerifier(use_dummy_model=True)
+        claim = Claim(
+            claim_id="quick_ratio",
+            text=(
+                "The quick ratio was 1.57, based on cash and cash equivalents of $5,912 million, "
+                "short-term investments of $1,879 million, accounts receivable of $3,353 million, "
+                "and total current liabilities of $7,106 million."
+            ),
+            section="hard_fact",
+            cited_sources=["amd_2022_10k"],
+            contains_numbers=True,
+            extracted_numbers=["1.57", "$5,912 million", "$1,879 million", "$3,353 million", "$7,106 million"],
+        )
+        evidence_text = (
+            "Cash and cash equivalents were $5,912 million. Short-term investments were $1,879 million. "
+            "Accounts receivable, net, were $3,353 million. Total current liabilities were $7,106 million."
+        )
+
+        assert verifier._verify_numeric_alignment(claim, evidence_text) is True
+
+    def test_numeric_alignment_accepts_derived_working_capital_from_primary_line_items(self):
+        verifier = EvidenceVerifier(use_dummy_model=True)
+        claim = Claim(
+            claim_id="working_capital",
+            text=(
+                "The company had positive working capital of $831 million, based on total current assets of "
+                "$6,758 million and total current liabilities of $5,927 million."
+            ),
+            section="hard_fact",
+            cited_sources=["corning_2022_10k"],
+            contains_numbers=True,
+            extracted_numbers=["$831 million", "$6,758 million", "$5,927 million"],
+        )
+        evidence_text = (
+            "Consolidated balance sheets (In millions). Total current assets $6,758. "
+            "Total current liabilities $5,927."
+        )
+
+        assert verifier._verify_numeric_alignment(claim, evidence_text) is True
+
+    def test_verify_memo_keeps_derived_quick_ratio_claim_supported(self):
+        verifier = EvidenceVerifier(use_dummy_model=True)
+        claim = Claim(
+            claim_id="quick_ratio_supported",
+            text=(
+                "The quick ratio was 1.57, based on cash and cash equivalents of $5,912 million, "
+                "short-term investments of $1,879 million, accounts receivable of $3,353 million, "
+                "and total current liabilities of $7,106 million."
+            ),
+            section="hard_fact",
+            cited_sources=["amd_2022_10k"],
+            contains_numbers=True,
+            extracted_numbers=["1.57", "$5,912 million", "$1,879 million", "$3,353 million", "$7,106 million"],
+        )
+        evidence_store = {
+            "amd_2022_10k": [
+                {
+                    "chunk_id": "c1",
+                    "source_id": "amd_2022_10k",
+                    "text": (
+                        "Cash and cash equivalents were $5,912 million. Short-term investments were $1,879 million. "
+                        "Accounts receivable, net, were $3,353 million. Total current liabilities were $7,106 million."
+                    ),
+                    "source_type": "annual_report",
+                    "is_primary": True,
+                }
+            ]
+        }
+
+        results = verifier.verify_memo([claim], evidence_store)
+
+        assert results[0].confidence != ConfidenceLevel.UNSUPPORTED
+
+    def test_verify_memo_supports_multi_chunk_cited_comparison_claim(self, monkeypatch):
+        verifier = EvidenceVerifier(use_dummy_model=True)
+        monkeypatch.setattr(
+            verifier,
+            "_predict_pairs",
+            lambda _model, pairs: np.array([[0.1, 0.8, 0.1]] * len(pairs)),
+        )
+        claim = Claim(
+            claim_id="segment_ranking",
+            text="Corporate & Investment Bank had the highest net income at $3,725 million.",
+            section="hard_fact",
+            cited_sources=["jpmorgan_2022q2_10q", "jpmorgan_2022q2_10q"],
+            cited_chunks=["c1", "c2"],
+            contains_numbers=True,
+            extracted_numbers=["$3,725 million"],
+        )
+        evidence_store = {
+            "jpmorgan_2022q2_10q": [
+                {
+                    "chunk_id": "c1",
+                    "source_id": "jpmorgan_2022q2_10q",
+                    "text": (
+                        "Consumer & Community Banking net income was $3,100 million. "
+                        "Corporate & Investment Bank net income was $3,725 million."
+                    ),
+                    "source_type": "quarterly_report",
+                    "is_primary": True,
+                },
+                {
+                    "chunk_id": "c2",
+                    "source_id": "jpmorgan_2022q2_10q",
+                    "text": (
+                        "Commercial Banking net income was $994 million. "
+                        "Asset & Wealth Management net income was $1,004 million."
+                    ),
+                    "source_type": "quarterly_report",
+                    "is_primary": True,
+                },
+            ]
+        }
+
+        results = verifier.verify_memo([claim], evidence_store)
+
+        assert results[0].confidence != ConfidenceLevel.UNSUPPORTED
+        assert results[0].supporting_chunk_ids == ["c1", "c2"]
+        assert results[0].supporting_source_ids == ["jpmorgan_2022q2_10q"]
+
+    def test_extract_relevant_excerpt_prefers_local_supported_passage(self):
+        verifier = EvidenceVerifier(use_dummy_model=True)
+        long_text = (
+            "Introductory investor-relations boilerplate. " * 80
+            + "Security revenue includes products designed to protect websites, apps, APIs, and users. "
+            + "Closing boilerplate. " * 60
+        )
+
+        excerpt = verifier._extract_relevant_excerpt(
+            long_text,
+            "Fastly's security revenue includes products designed to protect websites, apps, APIs, and users.",
+        )
+
+        assert "Security revenue includes products designed to protect websites, apps, APIs, and users." in excerpt
+        assert len(excerpt) < len(long_text)
+
+    def test_score_hypothesis_against_chunks_uses_excerpt_not_full_chunk(self, monkeypatch):
+        verifier = EvidenceVerifier(use_dummy_model=True)
+
+        captured_pairs = []
+
+        def fake_predict_pairs(model, pairs_to_score):
+            captured_pairs.extend(pairs_to_score)
+            return np.array([[0.1, 0.8, 0.1]] * len(pairs_to_score))
+
+        monkeypatch.setattr(verifier, "_predict_pairs", fake_predict_pairs)
+
+        long_text = (
+            "Preface " * 200
+            + "Network services revenue includes solutions designed to improve performance of websites, apps, APIs, and digital media. "
+            + "Tail " * 200
+        )
+
+        results = verifier.score_hypothesis_against_chunks(
+            "The source text describes Fastly's network services revenue mix.",
+            [{"chunk_id": "c1", "source_id": "s1", "text": long_text, "source_type": "quarterly_results", "is_primary": True}],
+        )
+
+        assert len(results) == 1
+        evidence_text, hypothesis = captured_pairs[0]
+        assert len(evidence_text) < len(long_text)
+        assert "Network services revenue includes solutions designed to improve performance" in evidence_text
+        assert "Fastly's network services revenue mix" in hypothesis

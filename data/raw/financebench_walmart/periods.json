@@ -1,0 +1,12 @@
+{
+  "company": "financebench_walmart",
+  "available_periods": [
+    "2018FY",
+    "2019FY",
+    "2020FY"
+  ],
+  "context_periods": [],
+  "latest_period": "2020FY",
+  "comparison_period": "2019FY",
+  "fiscal_year_end": "12-31"
+}

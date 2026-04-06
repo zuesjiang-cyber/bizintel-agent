@@ -14,9 +14,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
+from agent.artifacts import write_artifact_bundle
 from agent.config import settings
 from agent.orchestrator import BizIntelAgent
 from eval.evaluator import extract_scorable_markdown, score_markdown, score_research_trace
+from eval.financebench_mapping import score_gold_answer_mapping
 from verification.claim_extractor import ClaimExtractor
 from verification.evidence_verifier import EvidenceVerifier
 from retrieval.hybrid_retriever import HybridRetriever
@@ -35,6 +37,107 @@ except ImportError:  # pragma: no cover
 
 
 logger = logging.getLogger(__name__)
+
+
+def benchmark_artifact_root(output_path: Path) -> Path:
+    return output_path.with_name(f"{output_path.stem}_artifacts")
+
+
+def render_benchmark_case_report(item: dict, row: dict, result: dict) -> str:
+    lines = [
+        f"# Benchmark Case {row['item_id']}",
+        "",
+        f"- Query: {item['query']}",
+        f"- Category: {item.get('category', 'unknown')}",
+        f"- Difficulty: {item.get('difficulty', 'unknown')}",
+        f"- Query types: {', '.join(item.get('query_type', [])) or 'n/a'}",
+        f"- Companies: {', '.join(row.get('item_companies', [])) or 'n/a'}",
+        f"- Sources used: {', '.join(row.get('sources_used', [])) or 'n/a'}",
+        f"- Failure tags: {', '.join(row.get('failure_tags', [])) or 'none'}",
+        "",
+        "## Metrics",
+        "",
+        f"- retrieval_hit: {row.get('retrieval_hit', 0.0)}",
+        f"- wrong_entity_rate: {row.get('wrong_entity_rate', 0.0)}",
+        f"- wrong_period_rate: {row.get('wrong_period_rate', 0.0)}",
+        f"- verified_claim_coverage: {row.get('verified_claim_coverage', 0.0):.4f}",
+        f"- unsupported_claim_rate: {row.get('unsupported_claim_rate', 0.0):.4f}",
+        f"- required_subquestion_coverage: {row.get('required_subquestion_coverage', 0.0):.4f}",
+        f"- required_slot_coverage: {row.get('required_slot_coverage', 0.0):.4f}",
+        f"- decision_replay_consistency: {row.get('decision_replay_consistency', 0.0):.4f}",
+        f"- gold_answer_hit: {row.get('gold_answer_hit', 0.0):.4f}",
+        f"- gold_numeric_hit: {row.get('gold_numeric_hit', 0.0):.4f}",
+        f"- gold_citation_hit: {row.get('gold_citation_hit', 0.0):.4f}",
+        f"- gold_semantic_similarity: {row.get('gold_semantic_similarity', 0.0):.4f}",
+        f"- gold_semantic_hit: {row.get('gold_semantic_hit', 0.0):.4f}",
+        "",
+        "## Natural Text Memo",
+        "",
+        result["memo_markdown"].strip(),
+        "",
+    ]
+    return "\n".join(lines).strip() + "\n"
+
+
+def render_benchmark_report(payload: dict) -> str:
+    averages = payload.get("averages", {})
+    lines = [
+        f"# Benchmark Report: {payload.get('profile') or payload.get('split')}",
+        "",
+        f"- Version: {payload.get('version')}",
+        f"- Mode: {payload.get('mode')}",
+        f"- Timestamp: {payload.get('timestamp')}",
+        f"- Companies: {', '.join(payload.get('companies', [])) or 'n/a'}",
+        "",
+        "## Portfolio Metrics",
+        "",
+        f"- retrieval_hit: {averages.get('retrieval_hit', 0.0):.4f}",
+        f"- wrong_entity_rate: {averages.get('wrong_entity_rate', 0.0):.4f}",
+        f"- wrong_period_rate: {averages.get('wrong_period_rate', 0.0):.4f}",
+        f"- verified_claim_coverage: {averages.get('verified_claim_coverage', 0.0):.4f}",
+        f"- unsupported_claim_rate: {averages.get('unsupported_claim_rate', 0.0):.4f}",
+        f"- required_subquestion_coverage: {averages.get('required_subquestion_coverage', 0.0):.4f}",
+        f"- required_slot_coverage: {averages.get('required_slot_coverage', 0.0):.4f}",
+        f"- decision_replay_consistency: {averages.get('decision_replay_consistency', 0.0):.4f}",
+        f"- gold_answer_hit: {averages.get('gold_answer_hit', 0.0):.4f}",
+        f"- gold_numeric_hit: {averages.get('gold_numeric_hit', 0.0):.4f}",
+        f"- gold_citation_hit: {averages.get('gold_citation_hit', 0.0):.4f}",
+        f"- gold_semantic_similarity: {averages.get('gold_semantic_similarity', 0.0):.4f}",
+        f"- gold_semantic_hit: {averages.get('gold_semantic_hit', 0.0):.4f}",
+        "",
+        "## Cases",
+        "",
+    ]
+    for row in payload.get("rows", []):
+        lines.extend(
+            [
+                f"### {row.get('item_id', 'unknown')}",
+                "",
+                f"- Query: {row.get('query', '')}",
+                f"- Failure tags: {', '.join(row.get('failure_tags', [])) or 'none'}",
+                f"- Memo: {row.get('memo_path', '') or 'n/a'}",
+                f"- Trace: {row.get('trace_path', '') or 'n/a'}",
+                f"- Verification: {row.get('verification_path', '') or 'n/a'}",
+                "",
+            ]
+        )
+    return "\n".join(lines).strip() + "\n"
+
+
+def write_case_artifacts(output_path: Path, item: dict, row: dict, result: dict) -> Dict[str, str]:
+    artifact_root = benchmark_artifact_root(output_path)
+    case_dir = artifact_root / row["item_id"]
+    bundle = write_artifact_bundle(result, case_dir)
+    report_path = case_dir / "benchmark_report.md"
+    report_path.write_text(render_benchmark_case_report(item, row, result), encoding="utf-8")
+    return {
+        "artifact_dir": str(case_dir),
+        "memo_path": str(bundle["memo"]),
+        "trace_path": str(bundle["trace"]),
+        "summary_path": str(bundle["summary"]),
+        "verification_path": str(bundle["verification"]),
+        "report_path": str(report_path),
+    }
 
 
 def load_jsonl(path: Path) -> List[dict]:
@@ -174,6 +277,14 @@ def answer_quality(item: dict, metrics: dict, matched_count: int) -> int:
         score = min(score, 3)
     if metrics.get("decision_replay_consistency", 1.0) < 1.0:
         score = min(score, 4)
+    if metrics.get("gold_answer_mode", "unmapped") == "numeric_exact" and metrics.get("gold_numeric_hit", 0.0) < 1.0:
+        score = min(score, 3)
+    if (
+        metrics.get("gold_answer_mode", "unmapped") == "semantic_gold_answer"
+        and metrics.get("gold_semantic_hit", 1.0) < 1.0
+        and verified_claim_coverage(metrics) < 0.6
+    ):
+        score = min(score, 4)
     return min(score, 5)
 
 
@@ -205,6 +316,12 @@ def failure_tags(item: dict, metrics: dict, memo_markdown: str, gold_entries: Li
         tags.append("S4_temporal_confusion")
     if metrics.get("scope_supported") is False:
         tags.append("A1_unsupported_scope_multi_company")
+    if metrics.get("gold_answer_mode", "unmapped") == "numeric_exact" and metrics.get("gold_numeric_hit", 0.0) < 1.0:
+        tags.append("G1_gold_numeric_miss")
+    if metrics.get("gold_answer_mode", "unmapped") != "unmapped" and metrics.get("gold_citation_hit", 0.0) < 1.0:
+        tags.append("G1_gold_citation_miss")
+    if metrics.get("gold_answer_mode", "unmapped") != "unmapped" and metrics.get("gold_semantic_hit", 0.0) < 1.0:
+        tags.append("G1_gold_semantic_gap")
     return sorted(set(tags))
 
 
@@ -265,6 +382,19 @@ def item_splits(splits: dict, split: str) -> Dict[str, str]:
                 mapping[item_id] = split_name
         return mapping
     return {item_id: split for item_id in splits[split]}
+
+
+def resolve_item_split_label(
+    item_id: str,
+    item_split_map: Dict[str, str],
+    requested_split: str,
+    profile_name: str | None = None,
+) -> str:
+    if item_id in item_split_map:
+        return item_split_map[item_id]
+    if profile_name:
+        return f"profile:{profile_name}"
+    return requested_split
 
 
 def load_profiles(benchmark_dir: Path) -> Dict[str, dict]:
@@ -345,6 +475,10 @@ def selection_item_ids(
     return resolve_profile_item_ids(profile, splits), profile
 
 
+def find_missing_item_ids(item_ids: List[str], items: Dict[str, dict]) -> List[str]:
+    return [item_id for item_id in item_ids if item_id not in items]
+
+
 def compute_group_averages(rows: List[dict], field: str) -> Dict[str, dict]:
     grouped: Dict[str, List[dict]] = {}
     for row in rows:
@@ -409,6 +543,11 @@ def compute_averages(rows: List[dict]) -> dict:
             "semantic_completion_rate": 0.0,
             "wrong_entity_rate": 0.0,
             "wrong_period_rate": 0.0,
+            "gold_answer_hit": 0.0,
+            "gold_numeric_hit": 0.0,
+            "gold_citation_hit": 0.0,
+            "gold_semantic_similarity": 0.0,
+            "gold_semantic_hit": 0.0,
         }
     return {
         "retrieval_hit": sum(row.get("retrieval_hit", 0.0) for row in rows) / len(rows),
@@ -428,6 +567,11 @@ def compute_averages(rows: List[dict]) -> dict:
         "semantic_completion_rate": sum(row.get("semantic_completion_rate", 0.0) for row in rows) / len(rows),
         "wrong_entity_rate": sum(row.get("wrong_entity_rate", 0.0) for row in rows) / len(rows),
         "wrong_period_rate": sum(row.get("wrong_period_rate", 0.0) for row in rows) / len(rows),
+        "gold_answer_hit": sum(row.get("gold_answer_hit", 0.0) for row in rows) / len(rows),
+        "gold_numeric_hit": sum(row.get("gold_numeric_hit", 0.0) for row in rows) / len(rows),
+        "gold_citation_hit": sum(row.get("gold_citation_hit", 0.0) for row in rows) / len(rows),
+        "gold_semantic_similarity": sum(row.get("gold_semantic_similarity", 0.0) for row in rows) / len(rows),
+        "gold_semantic_hit": sum(row.get("gold_semantic_hit", 0.0) for row in rows) / len(rows),
     }
 
 
@@ -495,6 +639,14 @@ def write_payload(output_path: Path, payload: dict) -> None:
         json.dump(payload, handle, indent=2, ensure_ascii=False)
 
 
+def write_benchmark_report(output_path: Path, payload: dict) -> Path:
+    artifact_root = benchmark_artifact_root(output_path)
+    artifact_root.mkdir(parents=True, exist_ok=True)
+    report_path = artifact_root / "benchmark_report.md"
+    report_path.write_text(render_benchmark_report(payload), encoding="utf-8")
+    return report_path
+
+
 def clear_accelerator_cache(skip_gc: bool = False) -> None:
     if skip_gc:
         return
@@ -502,9 +654,16 @@ def clear_accelerator_cache(skip_gc: bool = False) -> None:
         gc.collect()
     if torch is None:
         return
+    configured_device = (settings.inference_device or "auto").strip().lower()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-    elif getattr(torch, "mps", None):
+    elif (
+        configured_device != "cpu"
+        and getattr(torch, "mps", None)
+        and getattr(torch, "backends", None)
+        and getattr(torch.backends, "mps", None)
+        and torch.backends.mps.is_available()
+    ):
         torch.mps.empty_cache()
 
 
@@ -527,6 +686,13 @@ def run(
         profile_violations = validate_profile_items(profile_name or "", profile, items, splits)
         if profile_violations:
             raise ValueError(f"Profile {profile_name} contains invalid items: {profile_violations}")
+    missing_item_ids = find_missing_item_ids(item_ids, items)
+    if missing_item_ids:
+        missing_preview = missing_item_ids[:10]
+        scope_label = f"profile {profile_name}" if profile_name else f"split {split}"
+        raise ValueError(
+            f"{scope_label} references {len(missing_item_ids)} unknown item_ids; sample={missing_preview}"
+        )
     item_split_map = item_splits(splits, "all")
     companies = sorted({company for item_id in item_ids for company in items[item_id]["companies"]})
     agents: dict[str, BizIntelAgent] = {}
@@ -596,13 +762,14 @@ def run(
             extractor=extractor,
             verifier=verifier,
         )
+        gold_metrics = score_gold_answer_mapping(scorable_markdown, answer_row)
         research_metrics = score_research_trace(
             result,
             build_required_facts(answer_row),
             expected_companies=item_companies,
             target_periods=item.get("target_periods", []),
         )
-        combined_metrics = {**metrics, **research_metrics}
+        combined_metrics = {**metrics, **research_metrics, **gold_metrics}
         matched_count = len(matched_gold_docs(gold_entries, scorable_markdown, source_ids))
         min_sources = item["required_evidence"]["min_distinct_sources"]
         scope_supported = result["memo_object"].contract.get("scope_supported", True)
@@ -610,7 +777,7 @@ def run(
         row = {
             "run_id": f"benchmark_{version}_{split}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
             "item_id": item_id,
-            "split": item_split_map[item_id],
+            "split": resolve_item_split_label(item_id, item_split_map, split, profile_name=profile_name),
             "system": "bizintel_agent",
             "category": item["category"],
             "difficulty": item["difficulty"],
@@ -632,6 +799,10 @@ def run(
             "wrong_entity_rate": research_metrics["wrong_entity_rate"],
             "wrong_period_rate": research_metrics["wrong_period_rate"],
             "controller_failure_reasons": research_metrics["controller_failure_reasons"],
+            "gold_answer_mode": gold_metrics["gold_answer_mode"],
+            "gold_answer_hit": gold_metrics["gold_answer_hit"],
+            "gold_numeric_hit": gold_metrics["gold_numeric_hit"],
+            "gold_citation_hit": gold_metrics["gold_citation_hit"],
             "scope_supported": scope_supported,
             "answer_quality": answer_quality(item, combined_metrics, matched_count),
             "failure_tags": failure_tags(item, combined_metrics, scorable_markdown, gold_entries, source_ids, matched_count),
@@ -642,6 +813,7 @@ def run(
             "question_attempts": attempt_count,
             "runtime_error": last_error,
         }
+        row.update(write_case_artifacts(output_path, item, row, result))
         rows_by_item_id[item_id] = row
         checkpoint_rows = [rows_by_item_id[current_item_id] for current_item_id in item_ids if current_item_id in rows_by_item_id]
         write_payload(
@@ -652,6 +824,9 @@ def run(
 
     rows = [rows_by_item_id[item_id] for item_id in item_ids if item_id in rows_by_item_id]
     payload = build_payload(version, split, mode, companies, rows, profile_name=profile_name, profile=profile)
+    payload["artifact_root"] = str(benchmark_artifact_root(output_path))
+    write_payload(output_path, payload)
+    payload["report_path"] = str(write_benchmark_report(output_path, payload))
     write_payload(output_path, payload)
     return payload
 

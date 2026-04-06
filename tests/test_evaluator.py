@@ -180,6 +180,19 @@ def test_score_markdown_flags_unscorable_cited_content_as_unsupported():
     assert metrics["claim_diagnostics"][0]["failure_reason"] == "no_extractable_claims"
 
 
+def test_score_markdown_does_not_penalize_refusal_only_summary_as_overclaim():
+    markdown = """# Memo
+
+## Executive Summary
+Insufficient evidence in the source pack to produce a confident research summary.
+"""
+    metrics = score_markdown(markdown, ["4.2%"], {})
+
+    assert metrics["total_claims"] == 0
+    assert metrics["unsupported_claim_rate"] == 0.0
+    assert metrics["claim_diagnostics"] == []
+
+
 def test_score_markdown_uses_fallback_extraction_for_cited_bullet_fragments():
     markdown = """# Memo
 

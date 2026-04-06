@@ -1,0 +1,11 @@
+{
+  "company": "financebench_cvs_health",
+  "available_periods": [
+    "2018FY",
+    "2022FY"
+  ],
+  "context_periods": [],
+  "latest_period": "2022FY",
+  "comparison_period": "2018FY",
+  "fiscal_year_end": "12-31"
+}

@@ -1,0 +1,48 @@
+{
+  "company": "financebench_american_water_works",
+  "aliases": [
+    "American Water Works"
+  ],
+  "currency": "USD",
+  "documents": [
+    {
+      "doc_id": "americanwaterworks_2020_10k",
+      "path": "data/raw/financebench_american_water_works/docs/americanwaterworks_2020_10k.pdf",
+      "title": "American Water Works 10K 2020FY (AMERICANWATERWORKS_2020_10K)",
+      "source_type": "annual_report",
+      "period": "2020FY",
+      "doc_date": null,
+      "published_at": null,
+      "issuer": "American Water Works",
+      "is_primary": true,
+      "url": "https://d18rn0p25nwr6d.cloudfront.net/CIK-0001410636/088387fd-7250-4370-80a7-dc5a30ea84ed.pdf",
+      "language": "en"
+    },
+    {
+      "doc_id": "americanwaterworks_2021_10k",
+      "path": "data/raw/financebench_american_water_works/docs/americanwaterworks_2021_10k.pdf",
+      "title": "American Water Works 10K 2021FY (AMERICANWATERWORKS_2021_10K)",
+      "source_type": "annual_report",
+      "period": "2021FY",
+      "doc_date": null,
+      "published_at": null,
+      "issuer": "American Water Works",
+      "is_primary": true,
+      "url": "https://d18rn0p25nwr6d.cloudfront.net/CIK-0001410636/1228947b-ee48-4079-984b-7741727bbcea.pdf",
+      "language": "en"
+    },
+    {
+      "doc_id": "americanwaterworks_2022_10k",
+      "path": "data/raw/financebench_american_water_works/docs/americanwaterworks_2022_10k.pdf",
+      "title": "American Water Works 10K 2022FY (AMERICANWATERWORKS_2022_10K)",
+      "source_type": "annual_report",
+      "period": "2022FY",
+      "doc_date": null,
+      "published_at": null,
+      "issuer": "American Water Works",
+      "is_primary": true,
+      "url": "https://d18rn0p25nwr6d.cloudfront.net/CIK-0001410636/ba508f4d-f3f5-4b6a-beba-e7bef231f5db.pdf",
+      "language": "en"
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "company": "financebench_pfizer",
+  "aliases": [
+    "Pfizer"
+  ],
+  "currency": "USD",
+  "documents": [
+    {
+      "doc_id": "pfizer_2021_10k",
+      "path": "data/raw/financebench_pfizer/docs/pfizer_2021_10k.pdf",
+      "title": "Pfizer 10K 2021FY (PFIZER_2021_10K)",
+      "source_type": "annual_report",
+      "period": "2021FY",
+      "doc_date": null,
+      "published_at": null,
+      "issuer": "Pfizer",
+      "is_primary": true,
+      "url": "https://d18rn0p25nwr6d.cloudfront.net/CIK-0000078003/fa35a206-5bac-4a7a-9571-1e194b4436b5.pdf",
+      "language": "en"
+    },
+    {
+      "doc_id": "pfizer_2023q2_10q",
+      "path": "data/raw/financebench_pfizer/docs/pfizer_2023q2_10q.pdf",
+      "title": "Pfizer 10Q 2023Q2 (Pfizer_2023Q2_10Q)",
+      "source_type": "quarterly_report",
+      "period": "2023Q2",
+      "doc_date": null,
+      "published_at": null,
+      "issuer": "Pfizer",
+      "is_primary": true,
+      "url": "https://d18rn0p25nwr6d.cloudfront.net/CIK-0000078003/c7518e4a-3aaf-4987-ae85-27460d0f526c.pdf",
+      "language": "en"
+    }
+  ]
+}

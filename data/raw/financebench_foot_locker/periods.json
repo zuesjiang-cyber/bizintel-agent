@@ -1,0 +1,10 @@
+{
+  "company": "financebench_foot_locker",
+  "available_periods": [
+    "2022_event"
+  ],
+  "context_periods": [],
+  "latest_period": "2022_event",
+  "comparison_period": null,
+  "fiscal_year_end": "12-31"
+}

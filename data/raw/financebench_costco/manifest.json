@@ -1,0 +1,22 @@
+{
+  "company": "financebench_costco",
+  "aliases": [
+    "Costco"
+  ],
+  "currency": "USD",
+  "documents": [
+    {
+      "doc_id": "costco_2021_10k",
+      "path": "data/raw/financebench_costco/docs/costco_2021_10k.pdf",
+      "title": "Costco 10K 2021FY (COSTCO_2021_10K)",
+      "source_type": "annual_report",
+      "period": "2021FY",
+      "doc_date": null,
+      "published_at": null,
+      "issuer": "Costco",
+      "is_primary": true,
+      "url": "https://d18rn0p25nwr6d.cloudfront.net/CIK-0000909832/534964a5-44c9-47b3-b3c0-7620830fad6c.pdf",
+      "language": "en"
+    }
+  ]
+}

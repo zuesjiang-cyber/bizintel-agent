@@ -1,0 +1,10 @@
+{
+  "company": "financebench_american_express",
+  "available_periods": [
+    "2022FY"
+  ],
+  "context_periods": [],
+  "latest_period": "2022FY",
+  "comparison_period": null,
+  "fiscal_year_end": "12-31"
+}

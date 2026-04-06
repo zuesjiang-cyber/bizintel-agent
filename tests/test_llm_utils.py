@@ -1,3 +1,4 @@
+import json
 import logging
 from types import SimpleNamespace
 
@@ -64,6 +65,18 @@ def test_extract_text_from_completion_reads_string_content():
     assert extract_text_from_completion(response) == "hello world"
 
 
+def test_extract_text_from_completion_parses_sse_chunk_string_and_strips_think():
+    events = [
+        {"choices": [{"delta": {"content": "<think>hidden</think>"}}]},
+        {"choices": [{"delta": {"content": '{"answers":['}}]},
+        {"choices": [{"delta": {"content": '{"question_id":"q1"}'}}]},
+        {"choices": [{"delta": {"content": "]}"}}]},
+    ]
+    response = "\n\n".join(f"data: {json.dumps(event)}" for event in events)
+
+    assert extract_text_from_completion(response) == '{"answers":[{"question_id":"q1"}]}'
+
+
 def test_extract_text_from_completion_strips_think_blocks_from_string_content():
     response = SimpleNamespace(
         choices=[
@@ -113,12 +126,14 @@ def test_generate_text_response_uses_chat_completions_api(caplog):
             user_prompt="Hi",
             max_tokens=123,
             temperature=0.3,
+            response_format={"type": "json_object"},
         )
 
     assert result == "ok"
     assert captured["model"] == "MiniMax-M2.7"
     assert captured["max_tokens"] == 123
     assert captured["temperature"] == 0.3
+    assert captured["response_format"] == {"type": "json_object"}
     assert captured["messages"][0] == {"role": "system", "content": "You are helpful."}
     assert captured["messages"][1] == {"role": "user", "content": "Hi"}
     assert "LLM request start" in caplog.text

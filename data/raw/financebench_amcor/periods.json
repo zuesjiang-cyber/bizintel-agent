@@ -1,0 +1,14 @@
+{
+  "company": "financebench_amcor",
+  "available_periods": [
+    "2020FY",
+    "2022_event",
+    "2023FY",
+    "2023Q2",
+    "2023Q4"
+  ],
+  "context_periods": [],
+  "latest_period": "2023Q4",
+  "comparison_period": "2023Q2",
+  "fiscal_year_end": "12-31"
+}

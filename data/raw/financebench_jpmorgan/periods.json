@@ -1,0 +1,13 @@
+{
+  "company": "financebench_jpmorgan",
+  "available_periods": [
+    "2021Q1",
+    "2022FY",
+    "2022Q2",
+    "2023Q2"
+  ],
+  "context_periods": [],
+  "latest_period": "2023Q2",
+  "comparison_period": "2022Q2",
+  "fiscal_year_end": "12-31"
+}

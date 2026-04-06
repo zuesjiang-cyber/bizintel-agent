@@ -1,0 +1,12 @@
+{
+  "company": "financebench_coca_cola",
+  "available_periods": [
+    "2017FY",
+    "2021FY",
+    "2022FY"
+  ],
+  "context_periods": [],
+  "latest_period": "2022FY",
+  "comparison_period": "2021FY",
+  "fiscal_year_end": "12-31"
+}

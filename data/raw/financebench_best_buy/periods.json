@@ -1,0 +1,13 @@
+{
+  "company": "financebench_best_buy",
+  "available_periods": [
+    "2017FY",
+    "2019FY",
+    "2023FY",
+    "2024Q2"
+  ],
+  "context_periods": [],
+  "latest_period": "2024Q2",
+  "comparison_period": "2023FY",
+  "fiscal_year_end": "12-31"
+}

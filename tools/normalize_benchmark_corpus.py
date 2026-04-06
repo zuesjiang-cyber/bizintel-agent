@@ -133,11 +133,18 @@ def parse_pdf_document(path: Path) -> str:
     return "\n\n".join(pages)
 
 
+def _looks_like_html_document(path: Path) -> bool:
+    prefix = path.read_bytes()[:2048].lstrip().lower()
+    return prefix.startswith(b"<!doctype html") or prefix.startswith(b"<html")
+
+
 def parse_document(path: Path) -> str:
     suffix = path.suffix.lower()
     if suffix in {".html", ".htm"}:
         return parse_html_document(path)
     if suffix == ".pdf":
+        if _looks_like_html_document(path):
+            return parse_html_document(path)
         return parse_pdf_document(path)
     return normalize_whitespace(path.read_text(encoding="utf-8", errors="ignore"))
 

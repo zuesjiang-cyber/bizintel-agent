@@ -1,0 +1,51 @@
+{
+  "version": "financebench_open150",
+  "item_count": 150,
+  "company_count": 32,
+  "document_count": 84,
+  "question_type_counts": {
+    "domain-relevant": 50,
+    "metrics-generated": 50,
+    "novel-generated": 50
+  },
+  "source_type_counts": {
+    "annual_report": 64,
+    "earnings_material": 6,
+    "quarterly_report": 8,
+    "quarterly_results": 6
+  },
+  "company_question_counts": {
+    "financebench_3m": 8,
+    "financebench_activision_blizzard": 2,
+    "financebench_adobe": 5,
+    "financebench_aes_corporation": 3,
+    "financebench_amazon": 3,
+    "financebench_amcor": 9,
+    "financebench_amd": 8,
+    "financebench_american_express": 7,
+    "financebench_american_water_works": 3,
+    "financebench_best_buy": 8,
+    "financebench_block": 3,
+    "financebench_boeing": 8,
+    "financebench_coca_cola": 3,
+    "financebench_corning": 4,
+    "financebench_costco": 1,
+    "financebench_cvs_health": 4,
+    "financebench_foot_locker": 2,
+    "financebench_general_mills": 4,
+    "financebench_johnson_johnson": 9,
+    "financebench_jpmorgan": 5,
+    "financebench_kraft_heinz": 1,
+    "financebench_lockheed_martin": 3,
+    "financebench_mgm_resorts": 7,
+    "financebench_microsoft": 2,
+    "financebench_netflix": 2,
+    "financebench_nike": 4,
+    "financebench_paypal": 1,
+    "financebench_pepsico": 11,
+    "financebench_pfizer": 6,
+    "financebench_ulta_beauty": 6,
+    "financebench_verizon": 5,
+    "financebench_walmart": 3
+  }
+}

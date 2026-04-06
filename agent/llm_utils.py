@@ -136,6 +136,9 @@ def _retry_delay_seconds(attempt: int) -> float:
 
 
 def extract_text_from_completion(response) -> str:
+    if isinstance(response, str):
+        return _extract_text_from_sse_string(response)
+
     choices = getattr(response, "choices", None) or []
     if not choices:
         return ""
@@ -154,6 +157,49 @@ def extract_text_from_completion(response) -> str:
                 text_blocks.append(block.text)
         return strip_hidden_reasoning("\n".join(text_blocks))
     return ""
+
+
+def _extract_text_from_sse_string(response_text: str) -> str:
+    raw = (response_text or "").strip()
+    if not raw:
+        return ""
+
+    parts: List[str] = []
+    saw_sse = False
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("data:"):
+            continue
+        saw_sse = True
+        payload = stripped[5:].strip()
+        if not payload or payload == "[DONE]":
+            continue
+        try:
+            event = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+        choices = event.get("choices") or []
+        for choice in choices:
+            if not isinstance(choice, dict):
+                continue
+            delta = choice.get("delta") or {}
+            if isinstance(delta, dict) and delta.get("content") is not None:
+                parts.append(str(delta["content"]))
+                continue
+            message = choice.get("message") or {}
+            if isinstance(message, dict):
+                content = message.get("content")
+                if isinstance(content, str):
+                    parts.append(content)
+                elif isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict) and block.get("text") is not None:
+                            parts.append(str(block["text"]))
+    if parts:
+        return strip_hidden_reasoning("".join(parts))
+    if saw_sse:
+        return ""
+    return strip_hidden_reasoning(raw)
 
 
 def strip_hidden_reasoning(text: str) -> str:
@@ -175,6 +221,7 @@ def generate_text_response(
     max_tokens: int = 1000,
     temperature: float = 0.2,
     max_retries: int = 2,
+    response_format: dict | None = None,
 ) -> str:
     system_chars = len(system_prompt or "")
     user_chars = len(user_prompt or "")
@@ -190,6 +237,8 @@ def generate_text_response(
     }
     if temperature is not None:
         payload["temperature"] = temperature
+    if response_format is not None:
+        payload["response_format"] = response_format
 
     logger.info(
         "LLM request start: model=%s system_chars=%s user_chars=%s total_chars=%s max_tokens=%s temperature=%s",

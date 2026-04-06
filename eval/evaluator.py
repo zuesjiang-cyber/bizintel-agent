@@ -358,6 +358,44 @@ def has_unscorable_answer_content(markdown: str) -> bool:
     return any(len(line.split()) >= 6 for line in content_lines)
 
 
+def is_refusal_only_answer(markdown: str, extractor: ClaimExtractor) -> bool:
+    stripped = markdown.strip()
+    if not stripped:
+        return False
+
+    content_lines = [
+        line.strip()
+        for line in stripped.splitlines()
+        if line.strip() and not line.strip().startswith("##")
+    ]
+    if not content_lines:
+        return False
+
+    saw_refusal_language = False
+    for line in content_lines:
+        normalized = line.lstrip("-• ").strip()
+        if not normalized:
+            continue
+        lower = normalized.lower()
+        if extractor._is_insufficient(normalized):
+            saw_refusal_language = True
+            continue
+        if lower.startswith("insufficient evidence in the source pack"):
+            saw_refusal_language = True
+            continue
+        if lower.startswith("insufficient evidence in the provided source pack"):
+            saw_refusal_language = True
+            continue
+        if lower.startswith("generated answer did not produce any verifiable cited claims"):
+            saw_refusal_language = True
+            continue
+        if "best support" in lower and "below" in lower and "threshold" in lower:
+            saw_refusal_language = True
+            continue
+        return False
+    return saw_refusal_language
+
+
 def score_markdown(
     markdown: str,
     required_facts: List[str],
@@ -375,7 +413,8 @@ def score_markdown(
     if not claims:
         claims = fallback_extract_cited_lines(scorable_markdown, "memo", extractor)
     if not claims:
-        unsupported_rate = 1.0 if has_unscorable_answer_content(scorable_markdown) else 0.0
+        refusal_only = is_refusal_only_answer(scorable_markdown, extractor)
+        unsupported_rate = 0.0 if refusal_only else (1.0 if has_unscorable_answer_content(scorable_markdown) else 0.0)
         diagnostics = []
         if unsupported_rate > 0.0:
             diagnostics.append(

@@ -1,7 +1,14 @@
 import json
 from pathlib import Path
 
-from tools.fetch_benchmark_sources import file_sha256, load_manifest, resolve_destination, select_documents
+from tools.fetch_benchmark_sources import (
+    download_document,
+    financebench_github_api_url,
+    file_sha256,
+    load_manifest,
+    resolve_destination,
+    select_documents,
+)
 
 
 def test_select_documents_filters_by_doc_id():
@@ -54,3 +61,53 @@ def test_file_sha256_is_stable(tmp_path):
     target.write_text("hello", encoding="utf-8")
 
     assert file_sha256(target) == "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+
+
+def test_download_document_uses_total_timeout(monkeypatch, tmp_path):
+    repo_root = Path(__file__).resolve().parents[1]
+    company = "cloudflare"
+    destination = repo_root / "data" / "raw" / company / "docs" / "timeout_test.pdf"
+    if destination.exists():
+        destination.unlink()
+    part_path = destination.with_suffix(".pdf.part")
+    if part_path.exists():
+        part_path.unlink()
+
+    calls = {}
+
+    class Completed:
+        stdout = '{"content_type":"application/pdf","url_effective":"https://example.com","http_code":200,"size_download":5}\n'
+
+    def fake_run(command, check, capture_output, text):
+        calls["command"] = command
+        part_path.parent.mkdir(parents=True, exist_ok=True)
+        part_path.write_bytes(b"hello")
+        return Completed()
+
+    monkeypatch.setattr("tools.fetch_benchmark_sources.subprocess.run", fake_run)
+    monkeypatch.setattr("tools.fetch_benchmark_sources.append_receipt", lambda *args, **kwargs: None)
+
+    status = download_document(
+        company,
+        {
+            "doc_id": "timeout_test",
+            "path": f"data/raw/{company}/docs/timeout_test.pdf",
+            "url": "https://example.com/timeout.pdf",
+        },
+        force=True,
+    )
+
+    assert "saved timeout_test" in status
+    assert "--max-time" in calls["command"]
+    assert "120" in calls["command"]
+    if destination.exists():
+        destination.unlink()
+
+
+def test_financebench_github_api_url_rewrites_raw_pdf_url():
+    source = "https://raw.githubusercontent.com/patronus-ai/financebench/main/pdfs/ACTIVISIONBLIZZARD_2019_10K.pdf"
+
+    assert (
+        financebench_github_api_url(source)
+        == "https://api.github.com/repos/patronus-ai/financebench/contents/pdfs/ACTIVISIONBLIZZARD_2019_10K.pdf?ref=main"
+    )

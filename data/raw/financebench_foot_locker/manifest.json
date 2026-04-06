@@ -1,0 +1,35 @@
+{
+  "company": "financebench_foot_locker",
+  "aliases": [
+    "Foot Locker"
+  ],
+  "currency": "USD",
+  "documents": [
+    {
+      "doc_id": "footlocker_2022_8k_dated_2022_05_20",
+      "path": "data/raw/financebench_foot_locker/docs/footlocker_2022_8k_dated_2022_05_20.pdf",
+      "title": "Foot Locker 8K 2022_event (FOOTLOCKER_2022_8K_dated-2022-05-20)",
+      "source_type": "quarterly_results",
+      "period": "2022_event",
+      "doc_date": null,
+      "published_at": null,
+      "issuer": "Foot Locker",
+      "is_primary": true,
+      "url": "https://investors.footlocker-inc.com/static-files/1ad2000b-8d76-4acd-8048-90b6fc17fee1",
+      "language": "en"
+    },
+    {
+      "doc_id": "footlocker_2022_8k_dated_2022_08_19",
+      "path": "data/raw/financebench_foot_locker/docs/footlocker_2022_8k_dated_2022_08_19.pdf",
+      "title": "Foot Locker 8K 2022_event (FOOTLOCKER_2022_8K_dated_2022-08-19)",
+      "source_type": "quarterly_results",
+      "period": "2022_event",
+      "doc_date": null,
+      "published_at": null,
+      "issuer": "Foot Locker",
+      "is_primary": true,
+      "url": "https://investors.footlocker-inc.com/static-files/6120b3ac-d921-4d93-9e7a-c2685e4b74b0",
+      "language": "en"
+    }
+  ]
+}

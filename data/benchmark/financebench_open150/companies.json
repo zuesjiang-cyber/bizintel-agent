@@ -1,0 +1,342 @@
+{
+  "companies": [
+    {
+      "company_pack": "financebench_3m",
+      "company_name": "3M",
+      "document_count": 3,
+      "question_count": 8,
+      "available_periods": [
+        "2018FY",
+        "2022FY",
+        "2023Q2"
+      ]
+    },
+    {
+      "company_pack": "financebench_activision_blizzard",
+      "company_name": "Activision Blizzard",
+      "document_count": 1,
+      "question_count": 2,
+      "available_periods": [
+        "2019FY"
+      ]
+    },
+    {
+      "company_pack": "financebench_adobe",
+      "company_name": "Adobe",
+      "document_count": 4,
+      "question_count": 5,
+      "available_periods": [
+        "2015FY",
+        "2016FY",
+        "2017FY",
+        "2022FY"
+      ]
+    },
+    {
+      "company_pack": "financebench_aes_corporation",
+      "company_name": "AES Corporation",
+      "document_count": 1,
+      "question_count": 3,
+      "available_periods": [
+        "2022FY"
+      ]
+    },
+    {
+      "company_pack": "financebench_amazon",
+      "company_name": "Amazon",
+      "document_count": 2,
+      "question_count": 3,
+      "available_periods": [
+        "2017FY",
+        "2019FY"
+      ]
+    },
+    {
+      "company_pack": "financebench_amcor",
+      "company_name": "Amcor",
+      "document_count": 5,
+      "question_count": 9,
+      "available_periods": [
+        "2020FY",
+        "2022_event",
+        "2023FY",
+        "2023Q2",
+        "2023Q4"
+      ]
+    },
+    {
+      "company_pack": "financebench_amd",
+      "company_name": "AMD",
+      "document_count": 2,
+      "question_count": 8,
+      "available_periods": [
+        "2015FY",
+        "2022FY"
+      ]
+    },
+    {
+      "company_pack": "financebench_american_express",
+      "company_name": "American Express",
+      "document_count": 1,
+      "question_count": 7,
+      "available_periods": [
+        "2022FY"
+      ]
+    },
+    {
+      "company_pack": "financebench_american_water_works",
+      "company_name": "American Water Works",
+      "document_count": 3,
+      "question_count": 3,
+      "available_periods": [
+        "2020FY",
+        "2021FY",
+        "2022FY"
+      ]
+    },
+    {
+      "company_pack": "financebench_best_buy",
+      "company_name": "Best Buy",
+      "document_count": 4,
+      "question_count": 8,
+      "available_periods": [
+        "2017FY",
+        "2019FY",
+        "2023FY",
+        "2024Q2"
+      ]
+    },
+    {
+      "company_pack": "financebench_block",
+      "company_name": "Block",
+      "document_count": 2,
+      "question_count": 3,
+      "available_periods": [
+        "2016FY",
+        "2020FY"
+      ]
+    },
+    {
+      "company_pack": "financebench_boeing",
+      "company_name": "Boeing",
+      "document_count": 2,
+      "question_count": 8,
+      "available_periods": [
+        "2018FY",
+        "2022FY"
+      ]
+    },
+    {
+      "company_pack": "financebench_coca_cola",
+      "company_name": "Coca-Cola",
+      "document_count": 3,
+      "question_count": 3,
+      "available_periods": [
+        "2017FY",
+        "2021FY",
+        "2022FY"
+      ]
+    },
+    {
+      "company_pack": "financebench_corning",
+      "company_name": "Corning",
+      "document_count": 3,
+      "question_count": 4,
+      "available_periods": [
+        "2020FY",
+        "2021FY",
+        "2022FY"
+      ]
+    },
+    {
+      "company_pack": "financebench_costco",
+      "company_name": "Costco",
+      "document_count": 1,
+      "question_count": 1,
+      "available_periods": [
+        "2021FY"
+      ]
+    },
+    {
+      "company_pack": "financebench_cvs_health",
+      "company_name": "CVS Health",
+      "document_count": 2,
+      "question_count": 4,
+      "available_periods": [
+        "2018FY",
+        "2022FY"
+      ]
+    },
+    {
+      "company_pack": "financebench_foot_locker",
+      "company_name": "Foot Locker",
+      "document_count": 2,
+      "question_count": 2,
+      "available_periods": [
+        "2022_event"
+      ]
+    },
+    {
+      "company_pack": "financebench_general_mills",
+      "company_name": "General Mills",
+      "document_count": 3,
+      "question_count": 4,
+      "available_periods": [
+        "2019FY",
+        "2020FY",
+        "2022FY"
+      ]
+    },
+    {
+      "company_pack": "financebench_johnson_johnson",
+      "company_name": "Johnson & Johnson",
+      "document_count": 4,
+      "question_count": 9,
+      "available_periods": [
+        "2022FY",
+        "2022Q4",
+        "2023Q2",
+        "2023_event"
+      ]
+    },
+    {
+      "company_pack": "financebench_jpmorgan",
+      "company_name": "JPMorgan",
+      "document_count": 4,
+      "question_count": 5,
+      "available_periods": [
+        "2021Q1",
+        "2022FY",
+        "2022Q2",
+        "2023Q2"
+      ]
+    },
+    {
+      "company_pack": "financebench_kraft_heinz",
+      "company_name": "Kraft Heinz",
+      "document_count": 1,
+      "question_count": 1,
+      "available_periods": [
+        "2019FY"
+      ]
+    },
+    {
+      "company_pack": "financebench_lockheed_martin",
+      "company_name": "Lockheed Martin",
+      "document_count": 3,
+      "question_count": 3,
+      "available_periods": [
+        "2020FY",
+        "2021FY",
+        "2022FY"
+      ]
+    },
+    {
+      "company_pack": "financebench_mgm_resorts",
+      "company_name": "MGM Resorts",
+      "document_count": 5,
+      "question_count": 7,
+      "available_periods": [
+        "2018FY",
+        "2020FY",
+        "2022FY",
+        "2022Q4",
+        "2023Q2"
+      ]
+    },
+    {
+      "company_pack": "financebench_microsoft",
+      "company_name": "Microsoft",
+      "document_count": 2,
+      "question_count": 2,
+      "available_periods": [
+        "2016FY",
+        "2023FY"
+      ]
+    },
+    {
+      "company_pack": "financebench_netflix",
+      "company_name": "Netflix",
+      "document_count": 2,
+      "question_count": 2,
+      "available_periods": [
+        "2015FY",
+        "2017FY"
+      ]
+    },
+    {
+      "company_pack": "financebench_nike",
+      "company_name": "Nike",
+      "document_count": 4,
+      "question_count": 4,
+      "available_periods": [
+        "2018FY",
+        "2019FY",
+        "2021FY",
+        "2023FY"
+      ]
+    },
+    {
+      "company_pack": "financebench_paypal",
+      "company_name": "Paypal",
+      "document_count": 1,
+      "question_count": 1,
+      "available_periods": [
+        "2022FY"
+      ]
+    },
+    {
+      "company_pack": "financebench_pepsico",
+      "company_name": "PepsiCo",
+      "document_count": 5,
+      "question_count": 11,
+      "available_periods": [
+        "2021FY",
+        "2022FY",
+        "2023Q1",
+        "2023_event"
+      ]
+    },
+    {
+      "company_pack": "financebench_pfizer",
+      "company_name": "Pfizer",
+      "document_count": 2,
+      "question_count": 6,
+      "available_periods": [
+        "2021FY",
+        "2023Q2"
+      ]
+    },
+    {
+      "company_pack": "financebench_ulta_beauty",
+      "company_name": "Ulta Beauty",
+      "document_count": 2,
+      "question_count": 6,
+      "available_periods": [
+        "2023FY",
+        "2023Q4"
+      ]
+    },
+    {
+      "company_pack": "financebench_verizon",
+      "company_name": "Verizon",
+      "document_count": 2,
+      "question_count": 5,
+      "available_periods": [
+        "2021FY",
+        "2022FY"
+      ]
+    },
+    {
+      "company_pack": "financebench_walmart",
+      "company_name": "Walmart",
+      "document_count": 3,
+      "question_count": 3,
+      "available_periods": [
+        "2018FY",
+        "2019FY",
+        "2020FY"
+      ]
+    }
+  ]
+}

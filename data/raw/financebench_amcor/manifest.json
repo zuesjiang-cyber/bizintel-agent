@@ -1,0 +1,74 @@
+{
+  "company": "financebench_amcor",
+  "aliases": [
+    "Amcor"
+  ],
+  "currency": "USD",
+  "documents": [
+    {
+      "doc_id": "amcor_2020_10k",
+      "path": "data/raw/financebench_amcor/docs/amcor_2020_10k.pdf",
+      "title": "Amcor 10K 2020FY (AMCOR_2020_10K)",
+      "source_type": "annual_report",
+      "period": "2020FY",
+      "doc_date": null,
+      "published_at": null,
+      "issuer": "Amcor",
+      "is_primary": true,
+      "url": "https://portalvhds1fxb0jchzgjph.blob.core.windows.net/press-releases-attachments/1517907/Annual%20report%20%5BSection%2013%20and%2015(d)%2C%20not%20S-K%20Item%20405%5D.pdf",
+      "language": "en"
+    },
+    {
+      "doc_id": "amcor_2022_8k_dated_2022_07_01",
+      "path": "data/raw/financebench_amcor/docs/amcor_2022_8k_dated_2022_07_01.pdf",
+      "title": "Amcor 8K 2022_event (AMCOR_2022_8K_dated-2022-07-01)",
+      "source_type": "quarterly_results",
+      "period": "2022_event",
+      "doc_date": null,
+      "published_at": null,
+      "issuer": "Amcor",
+      "is_primary": true,
+      "url": "https://portalvhds1fxb0jchzgjph.blob.core.windows.net/press-releases-attachments/1517333/Current%20report.pdf",
+      "language": "en"
+    },
+    {
+      "doc_id": "amcor_2023_10k",
+      "path": "data/raw/financebench_amcor/docs/amcor_2023_10k.pdf",
+      "title": "Amcor 10K 2023FY (AMCOR_2023_10K)",
+      "source_type": "annual_report",
+      "period": "2023FY",
+      "doc_date": null,
+      "published_at": null,
+      "issuer": "Amcor",
+      "is_primary": true,
+      "url": "https://portalvhds1fxb0jchzgjph.blob.core.windows.net/press-releases-attachments/1556025/Annual%20report%20%5BSection%2013%20and%2015(d)%2C%20not%20S-K%20Item%20405%5D.pdf",
+      "language": "en"
+    },
+    {
+      "doc_id": "amcor_2023q2_10q",
+      "path": "data/raw/financebench_amcor/docs/amcor_2023q2_10q.pdf",
+      "title": "Amcor 10Q 2023Q2 (AMCOR_2023Q2_10Q)",
+      "source_type": "quarterly_report",
+      "period": "2023Q2",
+      "doc_date": null,
+      "published_at": null,
+      "issuer": "Amcor",
+      "is_primary": true,
+      "url": "https://portalvhds1fxb0jchzgjph.blob.core.windows.net/press-releases-attachments/1516809/Quarterly%20report%20%5BSections%2013%20or%2015(d)%5D.pdf",
+      "language": "en"
+    },
+    {
+      "doc_id": "amcor_2023q4_earnings",
+      "path": "data/raw/financebench_amcor/docs/amcor_2023q4_earnings.pdf",
+      "title": "Amcor EARNINGS 2023Q4 (AMCOR_2023Q4_EARNINGS)",
+      "source_type": "earnings_material",
+      "period": "2023Q4",
+      "doc_date": null,
+      "published_at": null,
+      "issuer": "Amcor",
+      "is_primary": true,
+      "url": "https://assets.ctfassets.net/f7tuyt85vtoa/lkZ2DcdUS4nrhXzLdqCIw/4de2a47a58532c829039cfa972c7ad78/Amcor_FY23_-_Press_Release_FINAL.pdf",
+      "language": "en"
+    }
+  ]
+}

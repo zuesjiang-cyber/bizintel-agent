@@ -1,0 +1,44 @@
+{
+  "version": "financebench_open150",
+  "document_count": 84,
+  "company_packs": [
+    "financebench_3m",
+    "financebench_activision_blizzard",
+    "financebench_adobe",
+    "financebench_aes_corporation",
+    "financebench_amazon",
+    "financebench_amcor",
+    "financebench_amd",
+    "financebench_american_express",
+    "financebench_american_water_works",
+    "financebench_best_buy",
+    "financebench_block",
+    "financebench_boeing",
+    "financebench_coca_cola",
+    "financebench_corning",
+    "financebench_costco",
+    "financebench_cvs_health",
+    "financebench_foot_locker",
+    "financebench_general_mills",
+    "financebench_johnson_johnson",
+    "financebench_jpmorgan",
+    "financebench_kraft_heinz",
+    "financebench_lockheed_martin",
+    "financebench_mgm_resorts",
+    "financebench_microsoft",
+    "financebench_netflix",
+    "financebench_nike",
+    "financebench_paypal",
+    "financebench_pepsico",
+    "financebench_pfizer",
+    "financebench_ulta_beauty",
+    "financebench_verizon",
+    "financebench_walmart"
+  ],
+  "commands": [
+    {
+      "description": "Fetch all FinanceBench source packs",
+      "command": "python tools/fetch_benchmark_sources.py --company financebench_3m --company financebench_activision_blizzard --company financebench_adobe --company financebench_aes_corporation --company financebench_amazon --company financebench_amcor --company financebench_amd --company financebench_american_express --company financebench_american_water_works --company financebench_best_buy --company financebench_block --company financebench_boeing --company financebench_coca_cola --company financebench_corning --company financebench_costco --company financebench_cvs_health --company financebench_foot_locker --company financebench_general_mills --company financebench_johnson_johnson --company financebench_jpmorgan --company financebench_kraft_heinz --company financebench_lockheed_martin --company financebench_mgm_resorts --company financebench_microsoft --company financebench_netflix --company financebench_nike --company financebench_paypal --company financebench_pepsico --company financebench_pfizer --company financebench_ulta_beauty --company financebench_verizon --company financebench_walmart"
+    }
+  ]
+}

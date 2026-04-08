@@ -1,0 +1,48 @@
+{
+  "company": "financebench_coca_cola",
+  "aliases": [
+    "Coca-Cola"
+  ],
+  "currency": "USD",
+  "documents": [
+    {
+      "doc_id": "cocacola_2017_10k",
+      "path": "data/raw/financebench_coca_cola/docs/cocacola_2017_10k.pdf",
+      "title": "Coca-Cola 10K 2017FY (COCACOLA_2017_10K)",
+      "source_type": "annual_report",
+      "period": "2017FY",
+      "doc_date": null,
+      "published_at": null,
+      "issuer": "Coca-Cola",
+      "is_primary": true,
+      "url": "https://investors.coca-colacompany.com/filings-reports/annual-filings-10-k/content/0000021344-18-000008/0000021344-18-000008.pdf",
+      "language": "en"
+    },
+    {
+      "doc_id": "cocacola_2021_10k",
+      "path": "data/raw/financebench_coca_cola/docs/cocacola_2021_10k.pdf",
+      "title": "Coca-Cola 10K 2021FY (COCACOLA_2021_10K)",
+      "source_type": "annual_report",
+      "period": "2021FY",
+      "doc_date": null,
+      "published_at": null,
+      "issuer": "Coca-Cola",
+      "is_primary": true,
+      "url": "https://investors.coca-colacompany.com/filings-reports/annual-filings-10-k/content/0000021344-22-000009/0000021344-22-000009.pdf",
+      "language": "en"
+    },
+    {
+      "doc_id": "cocacola_2022_10k",
+      "path": "data/raw/financebench_coca_cola/docs/cocacola_2022_10k.pdf",
+      "title": "Coca-Cola 10K 2022FY (COCACOLA_2022_10K)",
+      "source_type": "annual_report",
+      "period": "2022FY",
+      "doc_date": null,
+      "published_at": null,
+      "issuer": "Coca-Cola",
+      "is_primary": true,
+      "url": "https://investors.coca-colacompany.com/filings-reports/all-sec-filings/content/0000021344-23-000011/0000021344-23-000011.pdf",
+      "language": "en"
+    }
+  ]
+}

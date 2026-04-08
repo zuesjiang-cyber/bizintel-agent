@@ -35,6 +35,32 @@ logger = logging.getLogger(__name__)
 _ENCODER_CACHE: Dict[Tuple[str, str], object] = {}
 _RERANKER_CACHE: Dict[Tuple[str, str], object] = {}
 SearchHit = Tuple[int, int, float]
+HARD_FACT_METRICS: Dict[str, Tuple[str, ...]] = {
+    "revenue": ("revenue", "sales", "net sales", "net revenue", "top line", "营收", "收入"),
+    "margin": ("margin", "gross margin", "operating margin", "毛利率", "利润率"),
+    "cash_flow": ("cash flow", "free cash flow", "fcf", "现金流", "自由现金流"),
+    "profitability": ("profit", "operating income", "net income", "ebitda", "eps", "盈利", "利润"),
+    "guidance": ("guidance", "outlook", "forecast", "指引", "展望"),
+    "valuation": ("valuation", "multiple", "ev", "估值", "倍数"),
+    "funding": ("funding", "valuation", "round", "raised", "融资", "估值"),
+}
+
+SOURCE_TYPE_ALIASES: Dict[str, set[str]] = {
+    "company_profile": {"company_profile", "profile", "ir_overview", "webpage"},
+    "results_release": {"results_release", "quarterly_results", "financial"},
+    "annual_report": {"annual_report"},
+    "quarterly_report": {"quarterly_report"},
+    "quarterly_results": {"quarterly_results", "results_release", "financial"},
+    "earnings_call_transcript": {"earnings_call_transcript"},
+    "shareholder_letter": {"shareholder_letter"},
+    "investor_presentation": {"investor_presentation"},
+    "investor_supplement": {"investor_supplement"},
+    "proxy_statement": {"proxy_statement"},
+    "event_page": {"event_page"},
+    "profile": {"profile", "company_profile"},
+    "webpage": {"webpage", "ir_overview"},
+    "financial": {"financial", "quarterly_results", "results_release"},
+}
 
 
 class _DummyEncoder:
@@ -122,6 +148,7 @@ class HybridRetriever:
             except Exception as exc:
                 logger.warning("Falling back to dummy embedding encoder because model loading failed: %s", exc)
                 self.encoder = _DummyEncoder()
+                _ENCODER_CACHE[(embedding_model, self.device)] = self.encoder
         else:
             self.encoder = _DummyEncoder()
 
@@ -135,6 +162,7 @@ class HybridRetriever:
             except Exception as exc:
                 logger.warning("Falling back to dummy reranker because model loading failed: %s", exc)
                 self.reranker = _DummyReranker()
+                _RERANKER_CACHE[(reranker_model, self.device)] = self.reranker
         else:
             self.reranker = _DummyReranker()
 
@@ -150,6 +178,23 @@ class HybridRetriever:
         # 缓存每次检索的中间排名（用于结果对象和 debug）
         self._last_bm25_ranks: Dict[int, int] = {}
         self._last_dense_ranks: Dict[int, int] = {}
+
+    def attach_source_metadata(self, source_meta_by_id: Dict[str, dict]) -> None:
+        """Backfill chunk metadata from processed source manifests."""
+        if not source_meta_by_id:
+            return
+        for chunk in self._chunks:
+            source_id = str(chunk.get("source_id", "")).strip()
+            if not source_id or source_id not in source_meta_by_id:
+                continue
+            meta = source_meta_by_id[source_id]
+            chunk.setdefault("company", meta.get("company"))
+            chunk.setdefault("doc_id", meta.get("doc_id") or source_id)
+            chunk.setdefault("source_type", meta.get("source_type"))
+            chunk.setdefault("period", meta.get("period"))
+            chunk.setdefault("title", meta.get("title"))
+            if "is_primary" not in chunk:
+                chunk["is_primary"] = meta.get("is_primary")
 
     def index(self, chunks: List[dict]):
         """
@@ -181,7 +226,9 @@ class HybridRetriever:
         top_k: int = 10,
         candidate_pool_size: int = 50,
         rerank_top_n: int = 20,
-        mode: str = "full_hybrid"
+        mode: str = "full_hybrid",
+        filters: Optional[dict] = None,
+        strategy: Optional[str] = None,
     ) -> List[RetrievedChunk]:
         results, _ = self.retrieve_with_trace(
             query,
@@ -189,6 +236,8 @@ class HybridRetriever:
             candidate_pool_size=candidate_pool_size,
             rerank_top_n=rerank_top_n,
             mode=mode,
+            filters=filters,
+            strategy=strategy,
         )
         return results
 
@@ -198,7 +247,9 @@ class HybridRetriever:
         top_k: int = 10,
         candidate_pool_size: int = 50,
         rerank_top_n: int = 20,
-        mode: str = "full_hybrid"
+        mode: str = "full_hybrid",
+        filters: Optional[dict] = None,
+        strategy: Optional[str] = None,
     ) -> tuple[List[RetrievedChunk], dict]:
         """
         检索模式：
@@ -212,19 +263,30 @@ class HybridRetriever:
         if self._bm25_index is None or self._dense_embeddings is None:
             raise RuntimeError("Index not built or loaded. Call index() or load_index() first.")
 
-        bm25_results = self._bm25_search(query, top_k=candidate_pool_size)
-        dense_results = self._dense_search(query, top_k=candidate_pool_size)
-
-        self._last_bm25_ranks = {idx: rank for idx, rank, _ in bm25_results}
-        self._last_dense_ranks = {idx: rank for idx, rank, _ in dense_results}
+        normalized_filters = self._normalize_filters(filters)
+        eligible_indices = self._eligible_indices(normalized_filters)
         trace = {
             "query": query,
             "mode": mode,
+            "strategy": strategy or "default",
             "candidate_pool_size": candidate_pool_size,
             "rerank_top_n": rerank_top_n,
-            "bm25_candidates": self._trace_candidates(bm25_results),
-            "dense_candidates": self._trace_candidates(dense_results),
+            "filters": normalized_filters,
+            "eligible_chunk_count": len(eligible_indices),
         }
+        if not eligible_indices:
+            trace["bm25_candidates"] = []
+            trace["dense_candidates"] = []
+            trace["final_results"] = []
+            return [], trace
+
+        bm25_results = self._bm25_search(query, top_k=candidate_pool_size, eligible_indices=eligible_indices)
+        dense_results = self._dense_search(query, top_k=candidate_pool_size, eligible_indices=eligible_indices)
+
+        self._last_bm25_ranks = {idx: rank for idx, rank, _ in bm25_results}
+        self._last_dense_ranks = {idx: rank for idx, rank, _ in dense_results}
+        trace["bm25_candidates"] = self._trace_candidates(bm25_results)
+        trace["dense_candidates"] = self._trace_candidates(dense_results)
 
         if mode == "bm25_only":
             candidates = [idx for idx, _, _ in sorted(bm25_results, key=lambda x: x[1])][:top_k]
@@ -249,10 +311,40 @@ class HybridRetriever:
             trace["final_results"] = self._serialize_results(results)
             return results, trace
 
+        candidates = fused_indices[:candidate_pool_size]
+        if strategy == "hard_fact":
+            ranked_scores = self._hard_fact_rank(query, candidates, normalized_filters)
+            trace["hard_fact_scores"] = [
+                {"chunk_id": self._chunks[idx]["chunk_id"], "score": score}
+                for idx, score in ranked_scores[:rerank_top_n]
+            ]
+            rerank_input = [idx for idx, _ in ranked_scores[:rerank_top_n]]
+            trace["rerank_input"] = self._trace_indices(rerank_input)
+            reranked = self._rerank(query, rerank_input)
+            rerank_map = {result.chunk_id: result.rerank_score for result in reranked}
+            final_indices = [
+                idx for idx, _ in sorted(
+                    ranked_scores[:rerank_top_n],
+                    key=lambda item: (
+                        item[1],
+                        rerank_map.get(self._chunks[item[0]]["chunk_id"], 0.0),
+                    ),
+                    reverse=True,
+                )[:top_k]
+            ]
+            final_results = self._build_ranked_results(
+                final_indices,
+                score_map={idx: score for idx, score in ranked_scores},
+                rerank_map=rerank_map,
+            )
+            trace["rerank_output"] = self._serialize_results(reranked)
+            trace["final_results"] = self._serialize_results(final_results)
+            return final_results, trace
+
         # mode == "full_hybrid"
-        candidates = fused_indices[:rerank_top_n]
-        trace["rerank_input"] = self._trace_indices(candidates)
-        reranked = self._rerank(query, candidates)
+        rerank_input = candidates[:rerank_top_n]
+        trace["rerank_input"] = self._trace_indices(rerank_input)
+        reranked = self._rerank(query, rerank_input)
         trace["rerank_output"] = self._serialize_results(reranked)
 
         final_results = reranked[:top_k]
@@ -272,24 +364,76 @@ class HybridRetriever:
                 bm25_rank=self._last_bm25_ranks.get(idx, -1),
                 dense_rank=self._last_dense_ranks.get(idx, -1),
                 rerank_score=score_map.get(idx, 0.0),
+                company=chunk.get("company"),
+                doc_id=chunk.get("doc_id"),
+                source_type=chunk.get("source_type"),
+                period=chunk.get("period"),
+                title=chunk.get("title"),
+                is_primary=chunk.get("is_primary"),
+                trust_level=chunk.get("trust_level") or self._derive_trust_level(chunk),
+                content_type=chunk.get("content_type") or self._derive_content_type(chunk.get("text", "")),
+                metric_signals=chunk.get("metric_signals") or self._metric_signals(chunk.get("text", "")),
             ))
         return results
 
-    def _bm25_search(self, query: str, top_k: int) -> List[SearchHit]:
+    def _build_ranked_results(
+        self,
+        indices: List[int],
+        score_map: Dict[int, float],
+        rerank_map: Dict[str, float],
+    ) -> List[RetrievedChunk]:
+        results = []
+        for idx in indices:
+            chunk = self._chunks[idx]
+            rerank_score = float(rerank_map.get(chunk["chunk_id"], 0.0))
+            results.append(RetrievedChunk(
+                chunk_id=chunk["chunk_id"],
+                text=chunk["text"],
+                source_id=chunk["source_id"],
+                page=chunk.get("page"),
+                score=float(score_map.get(idx, 0.0)),
+                bm25_rank=self._last_bm25_ranks.get(idx, -1),
+                dense_rank=self._last_dense_ranks.get(idx, -1),
+                rerank_score=rerank_score,
+                company=chunk.get("company"),
+                doc_id=chunk.get("doc_id"),
+                source_type=chunk.get("source_type"),
+                period=chunk.get("period"),
+                title=chunk.get("title"),
+                is_primary=chunk.get("is_primary"),
+                trust_level=chunk.get("trust_level") or self._derive_trust_level(chunk),
+                content_type=chunk.get("content_type") or self._derive_content_type(chunk.get("text", "")),
+                metric_signals=chunk.get("metric_signals") or self._metric_signals(chunk.get("text", "")),
+            ))
+        return results
+
+    def _bm25_search(self, query: str, top_k: int, eligible_indices: Optional[List[int]] = None) -> List[SearchHit]:
         """BM25 检索，返回 [(chunk_index, rank), ...]"""
         tokens = self._tokenize(query)
         scores = self._bm25_index.get_scores(tokens)
-        top_indices = np.argsort(scores)[::-1][:top_k]
+        candidate_indices = self._top_indices(scores, top_k=top_k, eligible_indices=eligible_indices)
+        top_indices = candidate_indices
         return [(int(idx), rank, float(scores[idx])) for rank, idx in enumerate(top_indices)]
 
-    def _dense_search(self, query: str, top_k: int) -> List[SearchHit]:
+    def _dense_search(self, query: str, top_k: int, eligible_indices: Optional[List[int]] = None) -> List[SearchHit]:
         """Dense 语义检索，返回 [(chunk_index, rank), ...]"""
         query_emb = self.encoder.encode(
             [query], normalize_embeddings=True
         )
         similarities = (self._dense_embeddings @ query_emb.T).flatten()
-        top_indices = np.argsort(similarities)[::-1][:top_k]
+        candidate_indices = self._top_indices(similarities, top_k=top_k, eligible_indices=eligible_indices)
+        top_indices = candidate_indices
         return [(int(idx), rank, float(similarities[idx])) for rank, idx in enumerate(top_indices)]
+
+    def _top_indices(self, scores: np.ndarray, top_k: int, eligible_indices: Optional[List[int]] = None) -> List[int]:
+        if eligible_indices is None:
+            return [int(idx) for idx in np.argsort(scores)[::-1][:top_k]]
+        if not eligible_indices:
+            return []
+        allowed = np.array(eligible_indices, dtype=int)
+        allowed_scores = scores[allowed]
+        order = np.argsort(allowed_scores)[::-1][:top_k]
+        return [int(idx) for idx in allowed[order]]
 
     def _reciprocal_rank_fusion(
         self,
@@ -337,6 +481,15 @@ class HybridRetriever:
                 bm25_rank=self._last_bm25_ranks.get(idx, -1),
                 dense_rank=self._last_dense_ranks.get(idx, -1),
                 rerank_score=float(rerank_scores[i]),
+                company=chunk.get("company"),
+                doc_id=chunk.get("doc_id"),
+                source_type=chunk.get("source_type"),
+                period=chunk.get("period"),
+                title=chunk.get("title"),
+                is_primary=chunk.get("is_primary"),
+                trust_level=chunk.get("trust_level") or self._derive_trust_level(chunk),
+                content_type=chunk.get("content_type") or self._derive_content_type(chunk.get("text", "")),
+                metric_signals=chunk.get("metric_signals") or self._metric_signals(chunk.get("text", "")),
             ))
 
         results.sort(key=lambda x: x.rerank_score, reverse=True)
@@ -351,6 +504,9 @@ class HybridRetriever:
                     "chunk_id": chunk["chunk_id"],
                     "source_id": chunk["source_id"],
                     "page": chunk.get("page"),
+                    "company": chunk.get("company"),
+                    "source_type": chunk.get("source_type"),
+                    "period": chunk.get("period"),
                     "rank": rank,
                     "score": score,
                 }
@@ -366,6 +522,9 @@ class HybridRetriever:
                     "chunk_id": chunk["chunk_id"],
                     "source_id": chunk["source_id"],
                     "page": chunk.get("page"),
+                    "company": chunk.get("company"),
+                    "source_type": chunk.get("source_type"),
+                    "period": chunk.get("period"),
                     "bm25_rank": self._last_bm25_ranks.get(idx, -1),
                     "dense_rank": self._last_dense_ranks.get(idx, -1),
                 }
@@ -378,13 +537,197 @@ class HybridRetriever:
                 "chunk_id": result.chunk_id,
                 "source_id": result.source_id,
                 "page": result.page,
+                "company": result.company,
+                "source_type": result.source_type,
+                "period": result.period,
                 "score": result.score,
                 "bm25_rank": result.bm25_rank,
                 "dense_rank": result.dense_rank,
                 "rerank_score": result.rerank_score,
+                "trust_level": result.trust_level,
+                "content_type": result.content_type,
+                "metric_signals": result.metric_signals,
             }
             for result in results
         ]
+
+    def _hard_fact_rank(self, query: str, candidate_indices: List[int], filters: dict) -> List[Tuple[int, float]]:
+        query_numbers = self._extract_numeric_tokens(query)
+        query_metrics = self._metric_signals(query)
+        exact_periods = set(filters.get("periods", []))
+        ranked: List[Tuple[int, float]] = []
+        for idx in candidate_indices:
+            chunk = self._chunks[idx]
+            text = chunk.get("text", "")
+            chunk_period = self._normalize_period(chunk.get("period"))
+            chunk_numbers = self._extract_numeric_tokens(text)
+            chunk_metrics = chunk.get("metric_signals") or self._metric_signals(text)
+            trust_level = chunk.get("trust_level") or self._derive_trust_level(chunk)
+            content_type = chunk.get("content_type") or self._derive_content_type(text)
+            score = 0.0
+
+            if exact_periods and chunk_period in exact_periods:
+                score += 4.0
+            elif exact_periods:
+                score -= 1.0
+
+            if query_metrics and set(query_metrics) & set(chunk_metrics):
+                score += 3.0
+            if query_numbers and query_numbers & chunk_numbers:
+                score += 3.0
+            if content_type in {"quantitative", "mixed"}:
+                score += 1.5
+            if chunk.get("is_primary"):
+                score += 2.0
+            score += trust_level * 0.2
+            bm25_rank = self._last_bm25_ranks.get(idx, 999)
+            dense_rank = self._last_dense_ranks.get(idx, 999)
+            score += 1.5 / (1 + max(bm25_rank, 0))
+            score += 0.5 / (1 + max(dense_rank, 0))
+            ranked.append((idx, score))
+        ranked.sort(key=lambda item: item[1], reverse=True)
+        return ranked
+
+    def _normalize_filters(self, filters: Optional[dict]) -> dict:
+        filters = filters or {}
+        companies = [
+            self._normalize_text(value)
+            for value in filters.get("companies", [])
+            if self._normalize_text(value)
+        ]
+        periods = [
+            self._normalize_period(value)
+            for value in filters.get("periods", [])
+            if self._normalize_period(value)
+        ]
+        source_types = self._normalize_source_types(filters.get("source_types", []))
+        return {
+            "companies": companies,
+            "periods": periods,
+            "source_types": source_types,
+        }
+
+    def _eligible_indices(self, filters: dict) -> List[int]:
+        companies = set(filters.get("companies", []))
+        periods = set(filters.get("periods", []))
+        source_types = set(filters.get("source_types", []))
+        eligible = []
+        for idx, chunk in enumerate(self._chunks):
+            if companies:
+                chunk_company = self._normalize_text(chunk.get("company"))
+                if chunk_company not in companies:
+                    continue
+            if periods:
+                chunk_period = self._normalize_period(chunk.get("period"))
+                if not self._period_matches(chunk_period, periods):
+                    continue
+            if source_types:
+                chunk_source_type = self._normalize_text(chunk.get("source_type"))
+                if chunk_source_type not in source_types:
+                    continue
+            eligible.append(idx)
+        return eligible
+
+    def _normalize_source_types(self, values: List[str]) -> List[str]:
+        normalized: set[str] = set()
+        for value in values:
+            key = self._normalize_text(value)
+            if not key:
+                continue
+            normalized.update(SOURCE_TYPE_ALIASES.get(key, {key}))
+        return sorted(normalized)
+
+    def _period_matches(self, chunk_period: str, allowed_periods: set[str]) -> bool:
+        if not allowed_periods:
+            return True
+        if not chunk_period:
+            return False
+        if chunk_period in allowed_periods:
+            return True
+        chunk_parts = self._parse_period_parts(chunk_period)
+        for allowed in allowed_periods:
+            if allowed == chunk_period:
+                return True
+            allowed_parts = self._parse_period_parts(allowed)
+            if not allowed_parts:
+                continue
+            if allowed_parts.get("year") and allowed_parts["year"] != chunk_parts.get("year"):
+                continue
+            allowed_quarter = allowed_parts.get("quarter")
+            if allowed_quarter and allowed_quarter != chunk_parts.get("quarter"):
+                continue
+            allowed_fiscal = allowed_parts.get("fiscal")
+            if allowed_fiscal and allowed_fiscal != chunk_parts.get("fiscal"):
+                continue
+            return True
+        return False
+
+    def _parse_period_parts(self, value: str) -> dict:
+        normalized = self._normalize_period(value)
+        if not normalized:
+            return {}
+        parts: dict[str, str] = {}
+        year_match = re.search(r"(20\d{2})", normalized)
+        if year_match:
+            parts["year"] = year_match.group(1)
+        quarter_match = re.search(r"q([1-4])", normalized)
+        if quarter_match:
+            parts["quarter"] = quarter_match.group(1)
+        if "fy" in normalized:
+            parts["fiscal"] = "fy"
+        return parts
+
+    def _normalize_period(self, value: Optional[str]) -> str:
+        normalized = self._normalize_text(value)
+        if not normalized:
+            return ""
+        normalized = normalized.replace("fiscalyear", "fy")
+        normalized = normalized.replace("fiscal", "fy")
+        return normalized
+
+    def _normalize_text(self, value: Optional[str]) -> str:
+        if value is None:
+            return ""
+        return str(value).strip().lower().replace(" ", "").replace("-", "")
+
+    def _extract_numeric_tokens(self, text: str) -> set[str]:
+        return {
+            match.group(0).lower().replace(",", "").strip()
+            for match in re.finditer(
+                r'\$?[\d]+(?:\.\d+)?(?:\s*(?:billion|million|thousand|bn|mn|b|m|k|%|bps))?',
+                text or "",
+                re.IGNORECASE,
+            )
+            if match.group(0).strip()
+        }
+
+    def _metric_signals(self, text: str) -> List[str]:
+        lowered = (text or "").lower()
+        matched = []
+        for metric, aliases in HARD_FACT_METRICS.items():
+            if any(alias in lowered for alias in aliases):
+                matched.append(metric)
+        return matched
+
+    def _derive_trust_level(self, chunk: dict) -> int:
+        source_type = self._normalize_text(chunk.get("source_type"))
+        if source_type in {"annual_report", "quarterly_report", "quarterly_results", "results_release"}:
+            return 5
+        if source_type in {"earnings_call_transcript", "shareholder_letter"}:
+            return 4
+        if chunk.get("is_primary"):
+            return 4
+        if source_type in {"investor_presentation", "investorsupplement", "profile", "company_profile", "ir_overview", "webpage"}:
+            return 3
+        return 2
+
+    def _derive_content_type(self, text: str) -> str:
+        tokens = self._extract_numeric_tokens(text)
+        if len(tokens) >= 2:
+            return "quantitative"
+        if len(tokens) == 1:
+            return "mixed"
+        return "qualitative"
 
     def _tokenize(self, text: str) -> List[str]:
         """

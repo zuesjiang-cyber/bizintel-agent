@@ -13,6 +13,39 @@ from agent.config import settings
 from retrieval.hybrid_retriever import HybridRetriever
 
 
+def load_processed_company_chunks(company_name: str) -> list[dict]:
+    processed_dir = settings.data_dir / "processed" / company_name
+    chunks_path = processed_dir / "chunks.json"
+    if not chunks_path.exists():
+        return []
+
+    with open(chunks_path, encoding="utf-8") as handle:
+        chunks = json.load(handle)
+
+    sources_path = processed_dir / "sources.json"
+    source_meta_by_id = {}
+    if sources_path.exists():
+        with open(sources_path, encoding="utf-8") as handle:
+            source_meta_by_id = {
+                row["source_id"]: row
+                for row in json.load(handle)
+            }
+
+    enriched = []
+    for chunk in chunks:
+        merged = dict(chunk)
+        meta = source_meta_by_id.get(chunk.get("source_id"), {})
+        merged.setdefault("company", meta.get("company", company_name))
+        merged.setdefault("doc_id", meta.get("doc_id") or chunk.get("source_id"))
+        merged.setdefault("source_type", meta.get("source_type"))
+        merged.setdefault("period", meta.get("period"))
+        merged.setdefault("title", meta.get("title"))
+        if "is_primary" not in merged:
+            merged["is_primary"] = meta.get("is_primary")
+        enriched.append(merged)
+    return enriched
+
+
 def build_index(company_name: str = None):
     retriever = HybridRetriever(
         embedding_model=settings.embedding_model,
@@ -31,10 +64,8 @@ def build_index(company_name: str = None):
         companies = [d.name for d in processed_dir.iterdir() if d.is_dir()]
 
     for company in companies:
-        chunks_path = processed_dir / company / "chunks.json"
-        if chunks_path.exists():
-            with open(chunks_path) as f:
-                chunks = json.load(f)
+        chunks = load_processed_company_chunks(company)
+        if chunks:
             all_chunks.extend(chunks)
             print(f"Loaded {len(chunks)} chunks from {company}")
 

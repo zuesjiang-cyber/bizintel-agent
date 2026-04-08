@@ -1,128 +1,106 @@
 # Benchmark Data Layout
 
-This benchmark is designed for a controlled same-corpus comparison:
+这个 benchmark 现在评测的是两层东西：
 
-- `bizintel_agent`
-- `plain_llm`
+- 最终回答的证据质量
+- 研究控制器本身的行为质量
 
-The benchmark is only credible if the source pack is downloaded locally and evaluated against fixed evidence files.
+它不再只是“整题写作分数”。
 
-Current frozen version:
+## 当前冻结版本
 
-- [v2 selection protocol](/Users/jiang/Documents/cv project/bizintel-agent/data/benchmark/v2/selection_protocol.md)
-- [v2 corpus snapshot](/Users/jiang/Documents/cv project/bizintel-agent/data/benchmark/v2/corpus_snapshot.json)
-- [v2 results write-up](/Users/jiang/Documents/cv project/bizintel-agent/docs/benchmark_v2_results.md)
+- [v2 selection protocol](/Users/jiang/Documents/cv%20project/bizintel-agent/data/benchmark/v2/selection_protocol.md)
+- [v2 corpus snapshot](/Users/jiang/Documents/cv%20project/bizintel-agent/data/benchmark/v2/corpus_snapshot.json)
+- [benchmark_methodology.md](/Users/jiang/Documents/cv%20project/bizintel-agent/docs/benchmark_methodology.md)
 
-## Evaluation Thesis
+## 评测主张
 
-This benchmark is not trying to prove that BizIntel is a better general analyst than a frontier model.
-It is trying to prove four narrower claims:
+当前 benchmark 只试图证明更窄的四件事：
 
-1. `planner + retrieval + rerank` improves period-aware evidence gathering.
-2. `citation-aware synthesis` reduces unsupported factual claims versus a one-shot baseline.
-3. `source prioritization` helps the system use transcripts, filings, and supplements in the right order.
-4. `verification hooks` make failures easier to audit.
+1. 公司和时期边界不会被轻易打穿。
+2. 研究问题能被拆成更小、可验证的子问题。
+3. 子问题能走到正确的硬事实/定性通道。
+4. 证据不足时系统会补查或拒答，而不是硬写。
 
-That means v1 should prefer narrow, defensible items over broad writing prompts.
-
-## Directory Layout
+## 目录结构
 
 ```text
 data/
   raw/
     cloudflare/
-      manifest.json
-      periods.json
-      download_receipts.jsonl
-      docs/
     fastly/
-      manifest.json
-      periods.json
-      download_receipts.jsonl
-      docs/
   normalized/
     cloudflare/
-      documents.jsonl
-      chunks.jsonl
     fastly/
-      documents.jsonl
-      chunks.jsonl
   benchmark/
     README.md
     v1/
+    v2/
       items.jsonl
       answers.jsonl
       evidence.jsonl
-      scores.jsonl
+      local_facts.jsonl
       splits.json
       rubric.json
+      profiles.json
+      selection_protocol.md
+      showcase_protocol.md
 ```
 
-## Flow
+## 数据流
 
 ```mermaid
 flowchart TD
-    A["Official IR / SEC sources"] --> B["data/raw/<company>/docs/*"]
-    B --> C["manifest.json + periods.json"]
-    C --> D["normalized/documents.jsonl"]
-    D --> E["normalized/chunks.jsonl"]
-    E --> F["benchmark/v1/items.jsonl"]
-    F --> G["bizintel_agent run"]
-    F --> H["plain_llm baseline run"]
-    E --> I["gold evidence alignment"]
-    G --> J["scores.jsonl"]
-    H --> J
-    I --> J
+    A["Raw source packs"] --> B["normalized/documents.jsonl"]
+    B --> C["normalized/chunks.jsonl"]
+    C --> D["benchmark items / answers / evidence"]
+    D --> E["local_facts.jsonl"]
+    D --> F["BizIntel deep research run"]
+    F --> G["trace.json + memo + verification rows"]
+    G --> H["benchmark_runner"]
+    H --> I["traditional metrics + research-tree metrics"]
 ```
 
-## Rules
+## 指标分层
 
-- Do not score against live web search.
-- Do not mix raw docs with benchmark labels.
-- Do not treat management decks as stronger than SEC filings.
-- Treat `target_periods` as reporting periods only. Context documents can help, but they should not be required to satisfy an item.
-- In `evidence.jsonl`, store both `anchor_text` and resolved `chunk_id`. `chunk_id` is for current runs; `anchor_text` is the recovery handle after chunk rebuilds.
-- Freeze the item set and exclusion reasons before looking at benchmark scores.
-- If the item set changes, bump the benchmark version instead of editing the current one in place after results.
-- Keep `source_type` fixed to:
-  - `ir_overview`
-  - `annual_report`
-  - `quarterly_report`
-  - `quarterly_results`
-  - `earnings_call_transcript`
-  - `investor_presentation`
-  - `investor_supplement`
-  - `proxy_statement`
-  - `event_page`
+### 安全指标
 
-## Collection
+- `wrong_entity_rate`
+- `wrong_period_rate`
+- `unsupported_claim_rate`
 
-Use:
+### 研究树指标
 
-```bash
-make fetch-benchmark-sources COMPANY=cloudflare
-make fetch-benchmark-sources COMPANY=fastly
-```
+- `subquestion_completion_rate`
+- `required_subquestion_coverage`
+- `required_slot_coverage`
+- `decision_trace_coverage`
+- `decision_replay_consistency`
 
-That only downloads the raw source pack. Parsing into `normalized/` and generating chunk-level evidence still needs a dedicated normalization step.
+### 结果指标
 
-## Anti P-Hacking
+- `retrieval_hit`
+- `verified_claim_coverage`
+- `required_fact_recall`
+- `answer_quality`
 
-The benchmark must be built in this order:
+## 规则
 
-1. Fix corpus inclusion based on source availability.
-2. Freeze the mini-benchmark question set and the exclusion log.
-3. Build normalized docs and chunk ids.
-4. Resolve evidence anchors to chunk ids mechanically.
-5. Run evaluation.
+- 不允许 live web search。
+- 不允许把 benchmark 标签混进原始语料。
+- 不允许把 management deck 当成强于 filing 的来源。
+- `target_periods` 是硬边界，不是建议。
+- `evidence.jsonl` 同时保存 `anchor_text` 和 `chunk_id`。
+- `local_facts.jsonl` 一行只允许一个原子事实。
+- question set、split、evidence anchors 必须先冻结，再跑分。
+- 如果 item wording、证据或题集发生变化，必须 bump benchmark version。
 
-Not allowed:
+## 重要边界
 
-- dropping hard questions after seeing results
-- rewriting gold evidence to fit model outputs
-- changing item wording after a failed run without bumping the version
+当前主系统的承诺能力仍然是单公司深度研究优先。  
+因此：
 
-See:
+- single-company items 是主评测对象
+- comparison items 仍保留在题集中，主要用于压力测试和失败暴露
 
-- [selection_protocol.md](/Users/jiang/Documents/cv project/bizintel-agent/data/benchmark/v1/selection_protocol.md)
-- [corpus_audit.md](/Users/jiang/Documents/cv project/bizintel-agent/data/benchmark/v1/corpus_audit.md)
+这两者不能混为一谈。

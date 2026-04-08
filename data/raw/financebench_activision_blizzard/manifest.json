@@ -1,0 +1,22 @@
+{
+  "company": "financebench_activision_blizzard",
+  "aliases": [
+    "Activision Blizzard"
+  ],
+  "currency": "USD",
+  "documents": [
+    {
+      "doc_id": "activisionblizzard_2019_10k",
+      "path": "data/raw/financebench_activision_blizzard/docs/activisionblizzard_2019_10k.pdf",
+      "title": "Activision Blizzard 10K 2019FY (ACTIVISIONBLIZZARD_2019_10K)",
+      "source_type": "annual_report",
+      "period": "2019FY",
+      "doc_date": null,
+      "published_at": null,
+      "issuer": "Activision Blizzard",
+      "is_primary": true,
+      "url": "https://investor.activision.com/static-files/32abe798-add2-4770-9c7d-4cd3a840ede2",
+      "language": "en"
+    }
+  ]
+}

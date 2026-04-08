@@ -1,0 +1,12 @@
+{
+  "company": "financebench_3m",
+  "available_periods": [
+    "2018FY",
+    "2022FY",
+    "2023Q2"
+  ],
+  "context_periods": [],
+  "latest_period": "2023Q2",
+  "comparison_period": "2022FY",
+  "fiscal_year_end": "12-31"
+}

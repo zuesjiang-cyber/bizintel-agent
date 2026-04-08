@@ -9,6 +9,7 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, List
+from urllib.parse import urlparse
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -57,6 +58,18 @@ def append_receipt(company: str, payload: dict) -> None:
         handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
 
+def financebench_github_api_url(source_url: str) -> str | None:
+    parsed = urlparse(source_url)
+    if parsed.netloc != "raw.githubusercontent.com":
+        return None
+    path = parsed.path.lstrip("/")
+    prefix = "patronus-ai/financebench/main/"
+    if not path.startswith(prefix):
+        return None
+    relative_path = path[len(prefix):]
+    return f"https://api.github.com/repos/patronus-ai/financebench/contents/{relative_path}?ref=main"
+
+
 def download_document(company: str, document: dict, force: bool = False, dry_run: bool = False) -> str:
     destination = resolve_destination(document["path"], company)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -76,6 +89,8 @@ def download_document(company: str, document: dict, force: bool = False, dry_run
         "3",
         "--connect-timeout",
         "30",
+        "--max-time",
+        "120",
         "-A",
         USER_AGENT,
         "-w",
@@ -90,7 +105,33 @@ def download_document(company: str, document: dict, force: bool = False, dry_run
     except subprocess.CalledProcessError:
         if temp_path.exists():
             temp_path.unlink()
-        raise
+
+        fallback_url = financebench_github_api_url(document["url"])
+        if not fallback_url:
+            raise
+
+        fallback_command = [
+            "curl",
+            "-fsSL",
+            "--http1.1",
+            "--retry",
+            "3",
+            "--connect-timeout",
+            "30",
+            "--max-time",
+            "120",
+            "-H",
+            "Accept: application/vnd.github.raw",
+            "-A",
+            USER_AGENT,
+            "-w",
+            '{"content_type":"%{content_type}","url_effective":"%{url_effective}","http_code":%{http_code},"size_download":%{size_download}}\n',
+            "-o",
+            str(temp_path),
+            fallback_url,
+        ]
+        result = subprocess.run(fallback_command, check=True, capture_output=True, text=True)
+        temp_path.replace(destination)
 
     metadata = json.loads(result.stdout.strip() or "{}")
     append_receipt(

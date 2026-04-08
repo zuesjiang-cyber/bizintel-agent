@@ -59,7 +59,7 @@ If the snapshot id or the underlying manifest/receipt/doc hashes change, the ben
 - Cloudflare items should rely on `10-K / quarterly results / transcript / Exhibit 99.1 / Investor Day`.
 - Fastly items should rely on `10-K / results / supplement / transcript`.
 - Single-company items are executed against a same-company index only.
-- Cross-company items are executed against a two-company index only.
+- Cross-company items remain in the frozen benchmark as diagnostic rows, but the current mainline controller may refuse them when scope is unsupported.
 
 ## Exclusion Rules
 
@@ -72,7 +72,7 @@ The following are explicitly excluded from `v2`:
 
 ## Split Rules
 
-The `dev` split must cover all major benchmark categories so prompt or planner tuning does not force test leakage from unseen categories.
+The `dev` split must cover all major benchmark categories so controller or prompt tuning does not force test leakage from unseen categories.
 
 `v2` therefore keeps:
 
@@ -98,3 +98,8 @@ The `dev` split must cover all major benchmark categories so prompt or planner t
 - `showcase` profiles exist to demonstrate conservative, evidence-bound behavior on narrower questions.
 - A showcase profile must be named and frozen before it is used in reporting.
 - A showcase profile must never be reported as if it were the full benchmark.
+
+## Current Product-Boundary Note
+
+The frozen `v2` question set still contains comparison items because they are useful diagnostics.
+Current mainline product behavior remains single-company-first, so comparison rows should be interpreted as stress tests unless and until multi-company research becomes a supported feature.

@@ -83,10 +83,11 @@ if start_btn and query:
         my_bar.progress(100, text="Report Generation Complete!")
 
         memo = result["memo_object"]
-        plan = result["plan"]
         workflow_events = result["workflow_events"]
         verification_rows = build_verification_rows(memo)
         trace_payload = build_trace_payload(result)
+        research_task = result.get("research_task")
+        subquestion_results = result.get("subquestion_results", [])
 
         # UI DISPLAY
         st.header(f"Results: {memo.title}")
@@ -139,8 +140,18 @@ if start_btn and query:
         st.subheader("Agent Plan & Workflow")
         col1, col2 = st.columns(2)
         with col1:
-            st.markdown("#### Planned Steps")
-            st.write([step.name for step in plan.steps])
+            st.markdown("#### Research Tree")
+            if subquestion_results:
+                st.write(
+                    [
+                        f"{item.subquestion.question_id} | {item.subquestion.lane.value} | {item.status.value} | {item.subquestion.text}"
+                        for item in subquestion_results
+                    ]
+                )
+            elif research_task:
+                st.write([research_task.query])
+            else:
+                st.write([])
         with col2:
             st.markdown("#### Workflow Events")
             st.write([f"{event['node_name']}: {event['event_type']}" for event in workflow_events])

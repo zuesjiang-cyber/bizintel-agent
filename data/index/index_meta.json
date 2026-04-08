@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "embedding_model": "BAAI/bge-base-en-v1.5",
+  "encoder_kind": "dummy",
+  "embedding_dim": 32,
+  "chunk_count": 2
+}

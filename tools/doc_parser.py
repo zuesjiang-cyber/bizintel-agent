@@ -30,6 +30,8 @@ def load_company_pack(company_dir: Path) -> List[Tuple[DocumentMeta, str]]:
             source_type="profile",
             title=f"{profile.get('company_name', company_dir.name)} - Company Profile",
             company=profile.get("company_name", company_dir.name),
+            period="company_context",
+            is_primary=False,
         )
         # 将 JSON 转为可读文本
         text = _profile_to_text(profile)
@@ -48,6 +50,7 @@ def load_company_pack(company_dir: Path) -> List[Tuple[DocumentMeta, str]]:
             url=source_url,
             date=date,
             company=company_dir.name,
+            period="company_context",
         )
         documents.append((meta, body))
 
@@ -99,7 +102,7 @@ def _parse_json_source(json_path: Path, company_name: str) -> Tuple[DocumentMeta
         raise ValueError(f"Expected JSON object in {json_path}")
 
     source_id = payload.get("source_id", f"{company_name}_{json_path.stem}")
-    source_type = _classify_source_type(json_path.name)
+    source_type = payload.get("source_type") or _classify_source_type(json_path.name)
     title = payload.get("title", json_path.stem.replace("_", " ").title())
     url = payload.get("source_url") or payload.get("url")
     date = payload.get("date")
@@ -116,6 +119,8 @@ def _parse_json_source(json_path: Path, company_name: str) -> Tuple[DocumentMeta
         url=url,
         date=date,
         company=company,
+        period=payload.get("period"),
+        is_primary=payload.get("is_primary"),
     )
     return meta, content
 

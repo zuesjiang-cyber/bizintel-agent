@@ -1,0 +1,35 @@
+{
+  "company": "financebench_amd",
+  "aliases": [
+    "AMD"
+  ],
+  "currency": "USD",
+  "documents": [
+    {
+      "doc_id": "amd_2015_10k",
+      "path": "data/raw/financebench_amd/docs/amd_2015_10k.pdf",
+      "title": "AMD 10K 2015FY (AMD_2015_10K)",
+      "source_type": "annual_report",
+      "period": "2015FY",
+      "doc_date": null,
+      "published_at": null,
+      "issuer": "AMD",
+      "is_primary": true,
+      "url": "https://ir.amd.com/sec-filings/filter/annual-filings/content/0000002488-16-000111/0000002488-16-000111.pdf",
+      "language": "en"
+    },
+    {
+      "doc_id": "amd_2022_10k",
+      "path": "data/raw/financebench_amd/docs/amd_2022_10k.pdf",
+      "title": "AMD 10K 2022FY (AMD_2022_10K)",
+      "source_type": "annual_report",
+      "period": "2022FY",
+      "doc_date": null,
+      "published_at": null,
+      "issuer": "AMD",
+      "is_primary": true,
+      "url": "https://ir.amd.com/sec-filings/content/0000002488-23-000047/0000002488-23-000047.pdf",
+      "language": "en"
+    }
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "profiles": {
+    "financebench_open150_dev": {
+      "track": "external_financebench",
+      "purpose": "Development slice of the FinanceBench open-source 150 set for local regression and harness tuning.",
+      "split": "dev"
+    },
+    "financebench_open150_test": {
+      "track": "external_financebench",
+      "purpose": "Held-out slice of the FinanceBench open-source 150 set for external QA evaluation.",
+      "split": "test"
+    },
+    "financebench_open150_all": {
+      "track": "external_financebench",
+      "purpose": "Full FinanceBench open-source 150 benchmark run across all supported single-company QA items.",
+      "split": "all"
+    },
+    "financebench_pepsico_11": {
+      "track": "external_financebench_smoke",
+      "purpose": "Single-company smoke run on the largest FinanceBench company subset (PepsiCo, 11 items).",
+      "item_ids": [
+        "financebench_id_04980",
+        "financebench_id_01009",
+        "financebench_id_00735",
+        "financebench_id_01328",
+        "financebench_id_03620",
+        "financebench_id_04481",
+        "financebench_id_01482",
+        "financebench_id_00705",
+        "financebench_id_00882",
+        "financebench_id_01474",
+        "financebench_id_01476"
+      ]
+    },
+    "financebench_amd_8": {
+      "track": "external_financebench_smoke",
+      "purpose": "Single-company smoke run on a compact tech-company subset (AMD, 8 items).",
+      "item_ids": [
+        "financebench_id_03069",
+        "financebench_id_00222",
+        "financebench_id_00995",
+        "financebench_id_01198",
+        "financebench_id_00917",
+        "financebench_id_01279",
+        "financebench_id_00563",
+        "financebench_id_00757"
+      ]
+    }
+  }
+}

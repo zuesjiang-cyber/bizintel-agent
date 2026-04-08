@@ -13,8 +13,11 @@ except ImportError:  # pragma: no cover - optional in demo-only mode
     OpenAI = None
 
 from agent.schemas import AnalysisStep, RetrievedChunk
+from agent.config import settings
 
 logger = logging.getLogger(__name__)
+THINK_BLOCK_PATTERN = re.compile(r"<think\b[^>]*>.*?</think>", re.IGNORECASE | re.DOTALL)
+THINK_TAG_PATTERN = re.compile(r"</?think\b[^>]*>", re.IGNORECASE)
 
 
 def normalize_api_key(api_key: str) -> str:
@@ -41,17 +44,19 @@ def should_use_stub_llm(llm_mode: str, api_key: str) -> bool:
     return False
 
 
-def build_openai_client(api_key: str, base_url: str):
+def build_openai_client(api_key: str, base_url: str, *, timeout_seconds: float | None = None):
     cleaned = normalize_api_key(api_key)
     if not cleaned:
         raise RuntimeError("Missing API key for OpenAI-compatible client.")
     if OpenAI is None:
         raise RuntimeError("openai package is not installed; run make install to add runtime dependencies.")
 
+    timeout = settings.llm_request_timeout_seconds if timeout_seconds is None else timeout_seconds
     return OpenAI(
         api_key=cleaned,
         base_url=normalize_openai_base_url(base_url),
         max_retries=0,
+        timeout=timeout,
     )
 
 
@@ -131,6 +136,9 @@ def _retry_delay_seconds(attempt: int) -> float:
 
 
 def extract_text_from_completion(response) -> str:
+    if isinstance(response, str):
+        return _extract_text_from_sse_string(response)
+
     choices = getattr(response, "choices", None) or []
     if not choices:
         return ""
@@ -141,14 +149,67 @@ def extract_text_from_completion(response) -> str:
 
     content = getattr(message, "content", "")
     if isinstance(content, str):
-        return content.strip()
+        return strip_hidden_reasoning(content)
     if isinstance(content, list):
         text_blocks: List[str] = []
         for block in content:
             if getattr(block, "type", None) == "text" and getattr(block, "text", None):
                 text_blocks.append(block.text)
-        return "\n".join(text_blocks).strip()
+        return strip_hidden_reasoning("\n".join(text_blocks))
     return ""
+
+
+def _extract_text_from_sse_string(response_text: str) -> str:
+    raw = (response_text or "").strip()
+    if not raw:
+        return ""
+
+    parts: List[str] = []
+    saw_sse = False
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("data:"):
+            continue
+        saw_sse = True
+        payload = stripped[5:].strip()
+        if not payload or payload == "[DONE]":
+            continue
+        try:
+            event = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+        choices = event.get("choices") or []
+        for choice in choices:
+            if not isinstance(choice, dict):
+                continue
+            delta = choice.get("delta") or {}
+            if isinstance(delta, dict) and delta.get("content") is not None:
+                parts.append(str(delta["content"]))
+                continue
+            message = choice.get("message") or {}
+            if isinstance(message, dict):
+                content = message.get("content")
+                if isinstance(content, str):
+                    parts.append(content)
+                elif isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict) and block.get("text") is not None:
+                            parts.append(str(block["text"]))
+    if parts:
+        return strip_hidden_reasoning("".join(parts))
+    if saw_sse:
+        return ""
+    return strip_hidden_reasoning(raw)
+
+
+def strip_hidden_reasoning(text: str) -> str:
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return ""
+    cleaned = THINK_BLOCK_PATTERN.sub("", cleaned)
+    cleaned = THINK_TAG_PATTERN.sub("", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
 
 
 def generate_text_response(
@@ -160,6 +221,7 @@ def generate_text_response(
     max_tokens: int = 1000,
     temperature: float = 0.2,
     max_retries: int = 2,
+    response_format: dict | None = None,
 ) -> str:
     system_chars = len(system_prompt or "")
     user_chars = len(user_prompt or "")
@@ -175,6 +237,8 @@ def generate_text_response(
     }
     if temperature is not None:
         payload["temperature"] = temperature
+    if response_format is not None:
+        payload["response_format"] = response_format
 
     logger.info(
         "LLM request start: model=%s system_chars=%s user_chars=%s total_chars=%s max_tokens=%s temperature=%s",
@@ -221,14 +285,23 @@ def build_stub_section_analysis(
     for chunk_rank, chunk in enumerate(chunks):
         for sentence_rank, sentence in enumerate(_extract_evidence_sentences(chunk.text)):
             score = _score_sentence(sentence, chunk.source_id, step, user_query)
-            scored_candidates.append((score, -chunk_rank, -sentence_rank, sentence, chunk.source_id))
+            scored_candidates.append(
+                (
+                    score,
+                    -chunk_rank,
+                    -sentence_rank,
+                    sentence,
+                    chunk.source_id,
+                    chunk.chunk_id,
+                )
+            )
 
-    for _, _, _, sentence, source_id in sorted(scored_candidates, reverse=True):
+    for _, _, _, sentence, source_id, chunk_id in sorted(scored_candidates, reverse=True):
         normalized = sentence.lower()
         if normalized in seen_sentences:
             continue
         seen_sentences.add(normalized)
-        lines.append(f"- {_ensure_terminal_punctuation(sentence)} [Chunk: {chunk.chunk_id}] [Source: {source_id}]")
+        lines.append(f"- {_ensure_terminal_punctuation(sentence)} [Chunk: {chunk_id}] [Source: {source_id}]")
         if len(lines) >= 3:
             break
 

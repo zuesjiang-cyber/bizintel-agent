@@ -1,30 +1,71 @@
 {
-  "retrieval_hit": {
-    "description": "Whether the system retrieved at least one gold evidence document for the item.",
-    "scale": [0, 1]
+  "wrong_entity_rate": {
+    "description": "Fraction of retrieved evidence chunks whose company does not match the benchmark item company scope.",
+    "scale": [0.0, 1.0],
+    "priority": "hard_gate"
   },
-  "verified_claim_coverage": {
-    "description": "Fraction of extracted claims that the verifier judged supported by bound evidence.",
-    "scale": [0.0, 1.0]
-  },
-  "citation_marker_coverage": {
-    "description": "Fraction of extracted claims that include citation markers, regardless of whether support is verified.",
-    "scale": [0.0, 1.0]
+  "wrong_period_rate": {
+    "description": "Fraction of retrieved evidence chunks whose reporting period falls outside the target_periods scope.",
+    "scale": [0.0, 1.0],
+    "priority": "hard_gate"
   },
   "unsupported_claim_rate": {
     "description": "Fraction of extracted claims judged unsupported by the verifier.",
-    "scale": [0.0, 1.0]
+    "scale": [0.0, 1.0],
+    "priority": "hard_gate"
+  },
+  "subquestion_completion_rate": {
+    "description": "Fraction of all generated subquestions that finished in completed state.",
+    "scale": [0.0, 1.0],
+    "priority": "controller"
+  },
+  "required_subquestion_coverage": {
+    "description": "Fraction of required subquestions that reached completed state.",
+    "scale": [0.0, 1.0],
+    "priority": "controller"
+  },
+  "required_slot_coverage": {
+    "description": "Fraction of must-cover slots that were covered by completed subquestions.",
+    "scale": [0.0, 1.0],
+    "priority": "controller"
+  },
+  "decision_trace_coverage": {
+    "description": "Fraction of subquestions that have at least one controller decision record.",
+    "scale": [0.0, 1.0],
+    "priority": "controller"
+  },
+  "decision_replay_consistency": {
+    "description": "Whether replayed subquestion states and controller decisions match the final result object.",
+    "scale": [0.0, 1.0],
+    "priority": "controller"
+  },
+  "retrieval_hit": {
+    "description": "Whether the system retrieved at least one gold evidence document for the item.",
+    "scale": [0, 1],
+    "priority": "retrieval"
+  },
+  "verified_claim_coverage": {
+    "description": "Fraction of extracted claims that the verifier judged supported by bound evidence.",
+    "scale": [0.0, 1.0],
+    "priority": "legacy_result"
+  },
+  "citation_marker_coverage": {
+    "description": "Fraction of extracted claims that include citation markers, regardless of whether support is verified.",
+    "scale": [0.0, 1.0],
+    "priority": "legacy_result"
   },
   "required_fact_recall": {
-    "description": "Coverage of must-cover concepts or required facts in the answer.",
-    "scale": [0.0, 1.0]
+    "description": "Coverage of must-cover concepts or required facts in the final memo text.",
+    "scale": [0.0, 1.0],
+    "priority": "result"
   },
   "answer_quality": {
-    "description": "Holistic quality score for completeness, balance, and evidence use.",
-    "scale": [1, 5]
+    "description": "Holistic quality score for completeness, balance, and evidence use, after trust and controller caps are applied.",
+    "scale": [1, 5],
+    "priority": "result"
   },
   "failure_tags": {
-    "description": "Flat list of common failure labels such as missing_period_comparison or unsupported_financial_claim.",
+    "description": "Flat list of failure labels covering safety, controller, and answer quality problems.",
     "scale": []
   }
 }

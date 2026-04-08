@@ -8,10 +8,10 @@ class FakeRetriever:
         self.mapping = mapping
         self.calls = []
 
-    def retrieve_with_trace(self, query, top_k=10, mode="full_hybrid"):
-        self.calls.append(query)
+    def retrieve_with_trace(self, query, top_k=10, mode="full_hybrid", filters=None, strategy=None):
+        self.calls.append({"query": query, "filters": filters, "strategy": strategy})
         chunks = self.mapping.get(query, [])
-        return chunks, {"query": query, "returned": len(chunks)}
+        return chunks, {"query": query, "returned": len(chunks), "filters": filters, "strategy": strategy}
 
 
 def _chunk(chunk_id: str, text: str, source_id: str = "src1") -> RetrievedChunk:
@@ -163,3 +163,42 @@ def test_executor_evidence_notes_include_chunk_excerpt(monkeypatch):
     assert result["evidence_notes"]
     assert "evidence_text" in result["evidence_notes"][0]
     assert "Cloudflare sells application security" in result["evidence_notes"][0]["evidence_text"]
+
+
+def test_evidence_ledger_prefers_highest_ranked_matching_chunk():
+    executor = AnalysisExecutor(FakeRetriever({}))
+    chunks = [
+        RetrievedChunk(
+            chunk_id="weak",
+            text="Cloudflare revenue was $100 million in the quarter.",
+            source_id="src_weak",
+            page=None,
+            score=0.2,
+            bm25_rank=8,
+            dense_rank=7,
+            rerank_score=0.1,
+            trust_level=2,
+            is_primary=False,
+        ),
+        RetrievedChunk(
+            chunk_id="strong",
+            text="Cloudflare total revenue was $100 million, up 25% year over year.",
+            source_id="src_strong",
+            page=None,
+            score=0.9,
+            bm25_rank=1,
+            dense_rank=1,
+            rerank_score=0.95,
+            trust_level=5,
+            is_primary=True,
+        ),
+    ]
+
+    ledger = executor._build_evidence_ledger(
+        chunks,
+        {"required_facts": ["revenue"]},
+    )
+
+    assert ledger[0]["support_status"] == "supported"
+    assert ledger[0]["evidence_ids"][0] == "strong"
+    assert set(ledger[0]["evidence_ids"]) == {"weak", "strong"}

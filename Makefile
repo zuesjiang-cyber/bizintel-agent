@@ -5,7 +5,7 @@ RUFF ?= .venv/bin/ruff
 STREAMLIT ?= .venv/bin/streamlit
 VERSION ?= v1
 
-.PHONY: help install test lint compile demo ui eval eval-retrieval refresh-demo-corpus fetch-benchmark-sources normalize-benchmark-corpus freeze-benchmark-snapshot resolve-benchmark-evidence build-benchmark-kb run-benchmark check
+.PHONY: help install test lint compile demo ui eval eval-retrieval refresh-demo-corpus fetch-benchmark-sources normalize-benchmark-corpus freeze-benchmark-snapshot resolve-benchmark-evidence prepare-benchmark-local-facts build-benchmark-kb prepare-offline-suite test-offline-suite run-benchmark check
 
 help:
 	@echo "Available targets:"
@@ -22,7 +22,10 @@ help:
 	@echo "  make normalize-benchmark-corpus COMPANY=<name>  Parse raw benchmark docs into normalized and processed corpora"
 	@echo "  make freeze-benchmark-snapshot VERSION=<name>  Write hash-level corpus snapshot for a benchmark version"
 	@echo "  make resolve-benchmark-evidence VERSION=<name>  Resolve anchor_text entries to real chunk ids"
-	@echo "  make build-benchmark-kb VERSION=<name>  Freeze question set, rebuild normalized corpora, and resolve evidence"
+	@echo "  make prepare-benchmark-local-facts VERSION=<name>  Generate question-scoped atomic local fact cards"
+	@echo "  make build-benchmark-kb VERSION=<name>  Freeze question set, rebuild normalized corpora, resolve evidence, and prepare local facts"
+	@echo "  make prepare-offline-suite  Validate and summarize the curated offline sample companies"
+	@echo "  make test-offline-suite  Run offline suite validation plus a stub benchmark smoke run"
 	@echo "  make run-benchmark VERSION=<name>  Run the local benchmark suite"
 	@echo "  make check    Run lint, tests, and compile smoke test"
 
@@ -71,12 +74,24 @@ freeze-benchmark-snapshot:
 resolve-benchmark-evidence:
 	$(PYTHON) -m tools.resolve_benchmark_evidence --file data/benchmark/$(VERSION)/evidence.jsonl $(ARGS)
 
+prepare-benchmark-local-facts:
+	$(PYTHON) -m tools.prepare_benchmark_local_facts --version $(VERSION) $(ARGS)
+
 build-benchmark-kb:
 	$(PYTHON) -m tools.normalize_benchmark_corpus --company cloudflare --company fastly
 	$(PYTHON) -m tools.freeze_benchmark_snapshot --version $(VERSION) --company cloudflare --company fastly
 	$(PYTHON) -m tools.resolve_benchmark_evidence --file data/benchmark/$(VERSION)/evidence.jsonl
+	$(PYTHON) -m tools.prepare_benchmark_local_facts --version $(VERSION)
+
+prepare-offline-suite:
+	$(PYTHON) -m tools.prepare_offline_suite --versions v1,v2 --write-report --strict
+
+test-offline-suite:
+	LLM_MODE=stub $(PYTHON) -m tools.prepare_offline_suite --versions v1,v2 --write-report --strict
+	LLM_MODE=stub $(PYTHON) -m eval.benchmark_runner --version v2 --profile trust_showcase_v2 --output eval/results/offline_trust_showcase_v2.json
+	$(PYTEST) -q tests/test_prepare_offline_suite.py tests/test_benchmark_runner.py
 
 run-benchmark:
 	$(PYTHON) -m eval.benchmark_runner --version $(VERSION) $(ARGS)
 
-check: lint test compile
+check: lint test compile test-offline-suite

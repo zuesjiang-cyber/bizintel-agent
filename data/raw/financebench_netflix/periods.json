@@ -1,0 +1,11 @@
+{
+  "company": "financebench_netflix",
+  "available_periods": [
+    "2015FY",
+    "2017FY"
+  ],
+  "context_periods": [],
+  "latest_period": "2017FY",
+  "comparison_period": "2015FY",
+  "fiscal_year_end": "12-31"
+}

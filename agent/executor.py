@@ -172,21 +172,28 @@ class AnalysisExecutor:
         for round_idx in range(max(1, int(settings.retrieval_gap_max_rounds))):
             round_retrieved: List[RetrievedChunk] = []
             for query in queries:
+                retrieval_filters = self._filters_for_query(step, query)
                 retrieved, trace = self.retriever.retrieve_with_trace(
                     query,
                     top_k=settings.retrieval_top_k,
                     mode=settings.retrieval_mode,
+                    filters=retrieval_filters,
                 )
                 round_retrieved.extend(retrieved)
                 retrieval_trace.append(trace)
 
             new_chunks = 0
             for chunk in round_retrieved:
-                if chunk.chunk_id not in unique_chunks:
+                existing = unique_chunks.get(chunk.chunk_id)
+                if existing is None:
                     unique_chunks[chunk.chunk_id] = chunk
                     new_chunks += 1
+                    continue
+                if self._chunk_rank(chunk) > self._chunk_rank(existing):
+                    unique_chunks[chunk.chunk_id] = chunk
 
-            latest_ledger = self._build_evidence_ledger(list(unique_chunks.values()), section_requirements)
+            ranked_chunks = self._sort_chunks(list(unique_chunks.values()))
+            latest_ledger = self._build_evidence_ledger(ranked_chunks, section_requirements)
             covered_facts = self._determine_covered_facts(required_facts, latest_ledger)
             remaining_facts = [fact for fact in required_facts if fact not in covered_facts]
             latest_gap_reflection = self._build_gap_reflection(
@@ -214,7 +221,7 @@ class AnalysisExecutor:
             queries = self._build_gap_queries(user_query, step, remaining_facts, latest_gap_reflection)
 
         return {
-            "retrieved_chunks": list(unique_chunks.values()),
+            "retrieved_chunks": self._sort_chunks(list(unique_chunks.values())),
             "retrieval_trace": retrieval_trace,
             "evidence_ledger": latest_ledger,
             "covered_facts": self._determine_covered_facts(required_facts, latest_ledger),
@@ -222,6 +229,19 @@ class AnalysisExecutor:
             "gap_reflection": latest_gap_reflection,
             "iterations": iterations,
         }
+
+    def _filters_for_query(self, step: AnalysisStep, query: str) -> dict:
+        normalized_query = (query or "").strip().lower()
+        for contract in step.query_contracts or []:
+            if (contract.get("query_text") or "").strip().lower() != normalized_query:
+                continue
+            filters = contract.get("filters") or {}
+            return {
+                "companies": list(filters.get("companies", [])),
+                "periods": list(filters.get("periods", [])),
+                "source_types": list(filters.get("source_types", [])),
+            }
+        return {"companies": [], "periods": [], "source_types": []}
 
     def _build_gap_queries(
         self,
@@ -258,6 +278,11 @@ class AnalysisExecutor:
                 if any(token in chunk.text.lower() for token in tokens)
             ]
             if matching_chunks:
+                matching_chunks = sorted(
+                    matching_chunks,
+                    key=lambda chunk: self._fact_chunk_rank(chunk, fact_slot),
+                    reverse=True,
+                )
                 best = matching_chunks[0]
                 reasoning_type = "numeric_calculation" if any(char.isdigit() for char in best.text) else "direct_quote"
                 ledger.append(
@@ -265,7 +290,7 @@ class AnalysisExecutor:
                         "fact_slot": fact_slot,
                         "support_status": "supported",
                         "extracted_fact": self._best_excerpt_for_fact(best.text, fact_slot),
-                        "evidence_ids": [best.chunk_id],
+                        "evidence_ids": [chunk.chunk_id for chunk in matching_chunks[:3]],
                         "reasoning_type": reasoning_type,
                         "uncertainty_note": "",
                     }
@@ -317,6 +342,36 @@ class AnalysisExecutor:
     def _default_fact_slot(self, step: AnalysisStep) -> str:
         facts = step.evidence_requirements.get("required_facts", [])
         return str(facts[0]) if facts else "required_fact"
+
+    def _sort_chunks(self, chunks: List[RetrievedChunk]) -> List[RetrievedChunk]:
+        return sorted(chunks, key=self._chunk_rank, reverse=True)
+
+    def _chunk_rank(self, chunk: RetrievedChunk) -> tuple:
+        return (
+            float(chunk.rerank_score or 0.0),
+            float(chunk.score or 0.0),
+            int(chunk.trust_level or 0),
+            1 if chunk.is_primary else 0,
+            -len(chunk.text or ""),
+            chunk.chunk_id,
+        )
+
+    def _fact_chunk_rank(self, chunk: RetrievedChunk, fact_slot: str) -> tuple:
+        tokens = [
+            token for token in re.findall(r"[a-z0-9]+", fact_slot.lower())
+            if len(token) > 2
+        ]
+        lowered = chunk.text.lower()
+        token_hits = sum(1 for token in tokens if token in lowered)
+        return (
+            token_hits,
+            float(chunk.rerank_score or 0.0),
+            float(chunk.score or 0.0),
+            int(chunk.trust_level or 0),
+            1 if chunk.is_primary else 0,
+            -len(chunk.text or ""),
+            chunk.chunk_id,
+        )
 
     def _ledger_to_notes(self, evidence_ledger: List[dict], chunks: List[RetrievedChunk]) -> List[dict]:
         chunk_map = {chunk.chunk_id: chunk for chunk in chunks}

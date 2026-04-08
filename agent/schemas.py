@@ -50,6 +50,15 @@ class RetrievedChunk:
     bm25_rank: int
     dense_rank: int
     rerank_score: float
+    company: Optional[str] = None
+    doc_id: Optional[str] = None
+    source_type: Optional[str] = None
+    period: Optional[str] = None
+    title: Optional[str] = None
+    is_primary: Optional[bool] = None
+    trust_level: Optional[int] = None
+    content_type: Optional[str] = None
+    metric_signals: List[str] = field(default_factory=list)
 
 
 # ========== 分析计划 ==========
@@ -72,6 +81,105 @@ class AnalysisPlan:
     steps: List[AnalysisStep] = field(default_factory=list)
     contract: Dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+
+# ========== 深度研究控制层 ==========
+
+class ResearchLane(Enum):
+    HARD_FACT = "hard_fact"
+    SEMANTIC = "semantic"
+
+
+class ResearchQuestionStatus(Enum):
+    PENDING = "pending"
+    RETRIEVING = "retrieving"
+    NEEDS_FOLLOWUP = "needs_followup"
+    COMPLETED = "completed"
+    CONFLICT = "conflict"
+    REFUSED = "refused"
+
+
+@dataclass
+class ResearchTask:
+    query: str
+    company_id: str
+    period: Optional[str] = None
+    target_periods: List[str] = field(default_factory=list)
+    required_slots: List[str] = field(default_factory=list)
+    required_source_types: List[str] = field(default_factory=list)
+    query_types: List[str] = field(default_factory=list)
+    mode: AnalysisMode = AnalysisMode.COMPANY
+    mentioned_company_ids: List[str] = field(default_factory=list)
+    max_subquestions: int = 6
+    max_followup_rounds: int = 2
+    max_evidence_per_question: int = 8
+    llm_call_budget: int = 8
+
+
+@dataclass
+class ResearchSubquestion:
+    question_id: str
+    text: str
+    lane: ResearchLane
+    priority: int
+    required: bool = True
+    fact_slot: str = ""
+    metric_family: str = ""
+    required_period: Optional[str] = None
+    allowed_source_types: List[str] = field(default_factory=list)
+    needs_numeric_verification: bool = False
+    status: ResearchQuestionStatus = ResearchQuestionStatus.PENDING
+    rounds_used: int = 0
+    max_rounds: int = 2
+
+
+@dataclass
+class ResearchDecisionRecord:
+    decision_type: str
+    question_id: str
+    reason: str
+    payload: Dict[str, Any] = field(default_factory=dict)
+    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+
+@dataclass
+class ResearchReplayRecord:
+    task: ResearchTask
+    subquestions: List[ResearchSubquestion] = field(default_factory=list)
+    decisions: List[ResearchDecisionRecord] = field(default_factory=list)
+    llm_calls_used: int = 0
+    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+
+@dataclass
+class EvidenceAssessment:
+    valid_chunk_count: int = 0
+    best_entailment: float = 0.0
+    mean_entailment: float = 0.0
+    best_support: float = 0.0
+    mean_support: float = 0.0
+    numeric_match: bool = False
+    metric_match: bool = False
+    high_trust_hit: bool = False
+    sufficient: bool = False
+    insufficient: bool = False
+    conflict: bool = False
+    reasons: List[str] = field(default_factory=list)
+    matched_chunk_ids: List[str] = field(default_factory=list)
+
+
+@dataclass
+class ResearchQuestionResult:
+    subquestion: ResearchSubquestion
+    status: ResearchQuestionStatus
+    evidence: List[RetrievedChunk] = field(default_factory=list)
+    assessments: List[EvidenceAssessment] = field(default_factory=list)
+    answer_text: str = ""
+    verified_claims: List["VerificationResult"] = field(default_factory=list)
+    supported_content: str = ""
+    refusal_reason: Optional[str] = None
+    followup_queries: List[str] = field(default_factory=list)
+    trace: List[Dict[str, Any]] = field(default_factory=list)
 
 
 # ========== 工作流 ==========
@@ -108,6 +216,7 @@ class ConfidenceLevel(Enum):
     MODERATE = "moderate"
     WEAK = "weak"
     UNSUPPORTED = "unsupported"
+    CONTRADICTED = "contradicted"
 
 
 @dataclass
@@ -120,6 +229,18 @@ class Claim:
     contains_numbers: bool = False
     extracted_numbers: List[str] = field(default_factory=list)
     specificity_score: float = 0.0
+    claim_type: str = "descriptive"    # numeric | descriptive | comparative | causal | management_commentary
+    risk_level: str = "medium"         # high | medium | low
+    subject: Optional[str] = None
+    metric: Optional[str] = None
+    value: Optional[str] = None
+    unit: Optional[str] = None
+    period: Optional[str] = None
+    comparison_basis: Optional[str] = None
+    directionality: Optional[str] = None
+    is_inference: bool = False
+    requires_primary_source: bool = False
+    atomicity: bool = True
 
 
 @dataclass
@@ -131,9 +252,17 @@ class VerificationResult:
     supporting_evidence: List[str]     # 支撑的原文片段
     explanation: str
     failure_reason: Optional[str] = None
+    failure_stage: Optional[str] = None  # structure | evidence | rules | semantics | reviewer
     supporting_source_ids: List[str] = field(default_factory=list)
     supporting_chunk_ids: List[str] = field(default_factory=list)
     primary_source_supported: Optional[bool] = None
+    period_verified: Optional[bool] = None
+    currency_verified: Optional[bool] = None
+    unit_verified: Optional[bool] = None
+    directionality_verified: Optional[bool] = None
+    contradiction_detected: Optional[bool] = None
+    verdict_trace: Dict[str, Any] = field(default_factory=dict)
+    review_notes: List[str] = field(default_factory=list)
 
 
 # ========== Memo ==========

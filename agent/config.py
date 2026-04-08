@@ -19,6 +19,26 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("MINIMAX_MODEL", "ANTHROPIC_MODEL", "OPENAI_MODEL"),
     )
     llm_mode: str = "auto"
+    strict_live_mode: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("STRICT_LIVE_MODE", "FORCE_LIVE_STRICT"),
+    )
+    llm_request_timeout_seconds: float = Field(
+        default=120.0,
+        validation_alias=AliasChoices("LLM_REQUEST_TIMEOUT_SECONDS", "OPENAI_TIMEOUT_SECONDS"),
+    )
+    llm_request_max_retries: int = Field(
+        default=2,
+        validation_alias=AliasChoices("LLM_REQUEST_MAX_RETRIES", "OPENAI_MAX_RETRIES"),
+    )
+    llm_judge_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("LLM_JUDGE_ENABLED"),
+    )
+    benchmark_question_max_retries: int = Field(
+        default=2,
+        validation_alias=AliasChoices("BENCHMARK_QUESTION_MAX_RETRIES", "BENCHMARK_ITEM_MAX_RETRIES"),
+    )
     search_api_key: str = ""
 
     data_dir: Path = Path("data")

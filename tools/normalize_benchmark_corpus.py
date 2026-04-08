@@ -133,11 +133,18 @@ def parse_pdf_document(path: Path) -> str:
     return "\n\n".join(pages)
 
 
+def _looks_like_html_document(path: Path) -> bool:
+    prefix = path.read_bytes()[:2048].lstrip().lower()
+    return prefix.startswith(b"<!doctype html") or prefix.startswith(b"<html")
+
+
 def parse_document(path: Path) -> str:
     suffix = path.suffix.lower()
     if suffix in {".html", ".htm"}:
         return parse_html_document(path)
     if suffix == ".pdf":
+        if _looks_like_html_document(path):
+            return parse_html_document(path)
         return parse_pdf_document(path)
     return normalize_whitespace(path.read_text(encoding="utf-8", errors="ignore"))
 
@@ -207,6 +214,7 @@ def normalize_company(company: str) -> dict:
         processed_sources.append(
             {
                 "source_id": meta.source_id,
+                "doc_id": doc["doc_id"],
                 "source_type": meta.source_type,
                 "title": meta.title,
                 "url": meta.url,
@@ -238,8 +246,14 @@ def normalize_company(company: str) -> dict:
                     "chunk_id": chunk.chunk_id,
                     "text": chunk.text,
                     "source_id": chunk.source_id,
+                    "doc_id": doc["doc_id"],
+                    "company": company,
+                    "source_type": doc["source_type"],
+                    "period": doc["period"],
+                    "title": doc["title"],
                     "page": chunk.page,
                     "token_count": chunk.token_count,
+                    "is_primary": doc.get("is_primary", True),
                 }
             )
 

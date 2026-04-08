@@ -688,6 +688,60 @@ def test_liquidity_queries_add_balance_sheet_line_item_probes():
     assert any("liquidity and capital resources" in query.lower() for query in followup_queries)
 
 
+def test_formula_operand_queries_do_not_add_change_driver_noise():
+    controller = ResearchController(load_models=False, demo_mode=True)
+    task = ResearchTask(
+        query=(
+            "What is the FY2019 fixed asset turnover ratio for Activision Blizzard? "
+            "Fixed asset turnover ratio is defined as: FY2019 revenue / "
+            "(average PP&E between FY2018 and FY2019)."
+        ),
+        company_id="financebench_activision_blizzard",
+        target_periods=["2019FY"],
+    )
+    subquestion = ResearchSubquestion(
+        question_id="q2",
+        text=(
+            "What is Activision Blizzard's net property, plant, and equipment (PP&E) balance "
+            "as of the end of FY2018 (December 31, 2018)?"
+        ),
+        lane=ResearchLane.HARD_FACT,
+        priority=1,
+        fact_slot="pp_and_e_fy2018",
+        metric_family="pp_and_e",
+        needs_numeric_verification=True,
+    )
+
+    queries = controller._build_initial_queries(task, subquestion)
+
+    assert not any("change drivers" in query.lower() for query in queries)
+    assert not any("increased decreased due to" in query.lower() for query in queries)
+    assert any("pp_and_e" in query.lower() or "property, plant" in query.lower() for query in queries)
+
+
+def test_numeric_value_subquestions_inside_change_tasks_stay_value_focused():
+    controller = ResearchController(load_models=False, demo_mode=True)
+    task = ResearchTask(
+        query="What drove operating margin change as of the FY22 for AMD?",
+        company_id="financebench_amd",
+        target_periods=["2022FY"],
+    )
+    subquestion = ResearchSubquestion(
+        question_id="q1",
+        text="What was AMD's operating margin in FY2022?",
+        lane=ResearchLane.HARD_FACT,
+        priority=1,
+        fact_slot="operating_margin_fy2022",
+        metric_family="operating_margin",
+        needs_numeric_verification=True,
+    )
+
+    queries = controller._build_initial_queries(task, subquestion)
+
+    assert not any("change drivers" in query.lower() for query in queries)
+    assert not any("increased decreased due to" in query.lower() for query in queries)
+
+
 def test_build_assessment_hypotheses_adds_segment_table_phrasing_for_ranking_questions():
     controller = ResearchController(load_models=False, demo_mode=True)
     task = ResearchTask(
@@ -952,6 +1006,113 @@ def test_query_coverage_proposals_restore_business_model_mix_and_management_slot
     assert any(item["lane"] == "hard_fact" and "revenue_mix" in str(item["fact_slot"]) for item in proposals)
 
 
+def test_query_coverage_proposals_add_product_service_catalog_question():
+    controller = ResearchController(load_models=False, demo_mode=True)
+    task = ResearchTask(
+        query="What are the major products and services that AMD sells as of FY22?",
+        company_id="amd",
+        target_periods=["FY22"],
+    )
+
+    proposals = controller._ensure_query_coverage_proposals(task, [])
+
+    assert any(
+        item["lane"] == "semantic"
+        and "products, platforms, and services" in item["text"].lower()
+        for item in proposals
+    )
+
+
+def test_build_initial_queries_add_product_service_catalog_searches():
+    controller = ResearchController(load_models=False, demo_mode=True)
+    task = ResearchTask(
+        query="What are the major products and services that AMD sells as of FY22?",
+        company_id="amd",
+        target_periods=["FY22"],
+    )
+    subquestion = ResearchSubquestion(
+        question_id="q1",
+        text="What major products, platforms, and services does amd explicitly say it sells in FY22?",
+        lane=ResearchLane.SEMANTIC,
+        priority=1,
+        fact_slot="amd_products_and_services",
+        metric_family="business_model",
+        needs_numeric_verification=False,
+    )
+
+    queries = controller._build_initial_queries(task, subquestion)
+
+    assert any("products services offerings annual report" in query.lower() for query in queries)
+    assert any("what does amd sell" in query.lower() for query in queries)
+
+
+def test_required_slot_products_and_services_stay_semantic():
+    controller = ResearchController(load_models=False, demo_mode=True)
+    task = ResearchTask(
+        query="What are the major products and services that AMD sells as of FY22?",
+        company_id="amd",
+        target_periods=["FY22"],
+    )
+
+    proposal = controller._proposal_for_required_slot(
+        task,
+        "major products and services",
+        priority=1,
+    )
+
+    assert proposal["lane"] == "semantic"
+    assert proposal["metric_family"] == "business_model"
+    assert proposal["needs_numeric_verification"] is False
+
+
+def test_enforce_lane_converts_product_service_listing_to_semantic():
+    controller = ResearchController(load_models=False, demo_mode=True)
+
+    lane = controller._enforce_lane("What were AMD's major products sold during FY2022?", "hard_fact")
+
+    assert lane == ResearchLane.SEMANTIC
+
+
+def test_query_coverage_proposals_add_customer_concentration_question():
+    controller = ResearchController(load_models=False, demo_mode=True)
+    task = ResearchTask(
+        query="Did AMD report customer concentration in FY22?",
+        company_id="amd",
+        target_periods=["FY22"],
+    )
+
+    proposals = controller._ensure_query_coverage_proposals(task, [])
+
+    assert any(
+        item["lane"] == "hard_fact"
+        and "customer concentration" in item["text"].lower()
+        for item in proposals
+    )
+
+
+def test_build_initial_queries_add_customer_concentration_searches():
+    controller = ResearchController(load_models=False, demo_mode=True)
+    task = ResearchTask(
+        query="Did AMD report customer concentration in FY22?",
+        company_id="amd",
+        target_periods=["FY22"],
+    )
+    subquestion = ResearchSubquestion(
+        question_id="q1",
+        text="Did amd disclose customer concentration in FY22, and if so what percentage of revenue did the customer represent?",
+        lane=ResearchLane.HARD_FACT,
+        priority=1,
+        fact_slot="amd_customer_concentration",
+        metric_family="revenue",
+        needs_numeric_verification=True,
+    )
+
+    queries = controller._build_initial_queries(task, subquestion)
+
+    assert any("customer concentration major customer percentage revenue" in query.lower() for query in queries)
+    assert any("significant customer 10 percent revenue" in query.lower() for query in queries)
+
+
 def test_revenue_mix_bonus_lifts_explicit_component_breakout_to_hard_fact_support(monkeypatch):
     controller = ResearchController(load_models=False, demo_mode=True)
     task = ResearchTask(
@@ -1209,12 +1370,18 @@ def test_batch_answer_missing_structured_payload_is_not_silently_stubbed(monkeyp
     controller._generate_subquestion_answers(task, [result], {"used": 0, "max": task.llm_call_budget}, replay)
 
     assert result.answer_text == (
-        "Insufficient evidence in the source pack: "
-        "Model did not return a verifiable structured answer."
+        "- Fastly reported Q4 2025 revenue of $172.6 million. "
+        "[Chunk: c1] [Source: fastly_q4_2025_results]"
     )
     assert any(item["status"] == "missing_structured_answer" for item in result.trace)
+    assert any(item["status"] == "fallback_answer_used" for item in result.trace)
     assert any(
         decision.decision_type == "answer_generation_contract_failure"
+        for decision in replay.decisions
+    )
+    assert any(
+        decision.decision_type == "answer_generated"
+        and decision.payload.get("recovered_from_evidence") is True
         for decision in replay.decisions
     )
 
@@ -1322,6 +1489,62 @@ def test_render_structured_answer_keeps_only_valid_cited_claims():
     )
 
     assert rendered == "- Fastly reported Q4 2025 revenue of $172.6 million. [Chunk: c1] [Source: fastly_q4_2025_results]"
+
+
+def test_render_structured_answer_replaces_off_topic_numeric_fragment_with_line_item_answer():
+    controller = ResearchController(load_models=False, demo_mode=True)
+    result = ResearchQuestionResult(
+        subquestion=ResearchSubquestion(
+            question_id="q1",
+            text="What is the FY2018 capital expenditure amount (in USD millions) for 3M?",
+            lane=ResearchLane.HARD_FACT,
+            priority=1,
+            fact_slot="capital_expenditures",
+            metric_family="capital_expenditures",
+            needs_numeric_verification=True,
+        ),
+        status=ResearchQuestionStatus.COMPLETED,
+        evidence=[
+            RetrievedChunk(
+                chunk_id="c1",
+                text=(
+                    "Foreign exchange had a positive impact of $102 million on revenue. "
+                    "Capital expenditures (1,577)."
+                ),
+                source_id="three_m_2018_10k",
+                page=None,
+                score=1.0,
+                bm25_rank=0,
+                dense_rank=0,
+                rerank_score=1.0,
+                company="financebench_3m",
+                period="2018FY",
+                source_type="annual_report",
+                is_primary=True,
+                trust_level=5,
+                metric_signals=["capital_expenditures"],
+                content_type="quantitative",
+            )
+        ],
+    )
+
+    rendered = controller._render_structured_answer(
+        result,
+        {
+            "question_id": "q1",
+            "status": "answered",
+            "claims": [
+                {
+                    "statement": "Foreign exchange had a positive impact of $102 million on revenue.",
+                    "chunk_id": "c1",
+                    "source_id": "three_m_2018_10k",
+                }
+            ],
+        },
+    )
+
+    assert "Capital expenditures were $1,577 million." in rendered
+    assert "positive impact of $102 million on revenue" not in rendered
 
 
 def test_render_structured_answer_keeps_direct_computed_hard_fact_statement():
@@ -1648,6 +1871,291 @@ def test_verify_answer_refuses_uncited_freeform_output():
     assert "did not produce any verifiable cited claims" in result.refusal_reason
 
 
+def test_verify_answer_recovers_direct_line_item_answer_after_verification_failure():
+    controller = ResearchController(load_models=False, demo_mode=True)
+    result = ResearchQuestionResult(
+        subquestion=ResearchSubquestion(
+            question_id="q1",
+            text="What is the FY2018 capital expenditure amount (in USD millions) for 3M?",
+            lane=ResearchLane.HARD_FACT,
+            priority=1,
+            fact_slot="capital_expenditures",
+            metric_family="capital_expenditures",
+            needs_numeric_verification=True,
+        ),
+        status=ResearchQuestionStatus.COMPLETED,
+        evidence=[
+            RetrievedChunk(
+                chunk_id="c1",
+                text="Capital expenditures (1,577).",
+                source_id="three_m_2018_10k",
+                page=None,
+                score=1.0,
+                bm25_rank=0,
+                dense_rank=0,
+                rerank_score=1.0,
+                company="financebench_3m",
+                period="2018FY",
+                source_type="annual_report",
+                is_primary=True,
+                trust_level=5,
+                metric_signals=["capital_expenditures"],
+                content_type="quantitative",
+            )
+        ],
+        answer_text="- Revenue growth was strong. [Chunk: c1] [Source: three_m_2018_10k]",
+    )
+
+    controller._verify_answer(result)
+
+    assert result.status == ResearchQuestionStatus.COMPLETED
+    assert "Capital expenditures were $1,577 million." in result.supported_content
+    assert any(event["stage"] == "verification_recovery" for event in result.trace)
+
+
+def test_execute_subquestion_llm_gray_zone_review_can_promote_near_threshold_hard_fact(monkeypatch):
+    controller = ResearchController(load_models=False, demo_mode=True)
+    controller.use_stub_llm = False
+    controller.client = object()
+    task = ResearchTask(
+        query="What is AMD's quick ratio for FY 2022?",
+        company_id="financebench_amd",
+        target_periods=["2022FY"],
+        max_followup_rounds=0,
+    )
+    subquestion = ResearchSubquestion(
+        question_id="q1",
+        text="What is AMD's quick ratio for FY 2022?",
+        lane=ResearchLane.HARD_FACT,
+        priority=1,
+        fact_slot="quick_ratio_fy22",
+        metric_family="financials",
+        needs_numeric_verification=True,
+        max_rounds=0,
+    )
+    chunk = RetrievedChunk(
+        chunk_id="c1",
+        text="Cash and cash equivalents were $5,912 million. Short-term investments were $1,879 million. Accounts receivable, net, were $3,353 million. Total current liabilities were $7,106 million.",
+        source_id="amd_2022_10k",
+        page=None,
+        score=1.0,
+        bm25_rank=0,
+        dense_rank=0,
+        rerank_score=1.0,
+        company="financebench_amd",
+        period="2022FY",
+        source_type="annual_report",
+        is_primary=True,
+        trust_level=5,
+        metric_signals=["financials"],
+        content_type="quantitative",
+    )
+
+    monkeypatch.setattr(controller, "_retrieve_queries", lambda *args, **kwargs: [chunk])
+    monkeypatch.setattr(
+        controller,
+        "_assess_evidence",
+        lambda *args, **kwargs: EvidenceAssessment(
+            valid_chunk_count=1,
+            best_entailment=0.52,
+            mean_entailment=0.52,
+            best_support=0.52,
+            mean_support=0.52,
+            numeric_match=True,
+            metric_match=True,
+            high_trust_hit=True,
+            sufficient=False,
+            insufficient=True,
+            reasons=["Best support 0.52 below hard-fact threshold."],
+            matched_chunk_ids=["c1"],
+        ),
+    )
+    monkeypatch.setattr(
+        "agent.research_controller.generate_text_response",
+        lambda *args, **kwargs: '{"verdict":"sufficient","rationale":"The filing contains the line items needed to compute the quick ratio directly."}',
+    )
+
+    replay = ResearchReplayRecord(task=task)
+    llm_budget = {"used": 0, "max": 1}
+    result = controller._execute_subquestion(
+        task=task,
+        subquestion=subquestion,
+        retriever=object(),
+        llm_budget=llm_budget,
+        replay=replay,
+    )
+
+    assert result.status == ResearchQuestionStatus.COMPLETED
+    assert result.assessments[-1].sufficient is True
+    assert llm_budget["used"] == 1
+    assert any(decision.decision_type == "llm_gray_zone_review" for decision in replay.decisions)
+    assert any(
+        decision.decision_type == "complete"
+        and decision.reason == "gray-zone evidence review accepted the evidence as sufficient"
+        for decision in replay.decisions
+    )
+
+
+def test_execute_subquestion_llm_gray_zone_review_does_not_override_hard_blockers(monkeypatch):
+    controller = ResearchController(load_models=False, demo_mode=True)
+    controller.use_stub_llm = False
+    controller.client = object()
+    task = ResearchTask(
+        query="What is AMD's total revenue for FY 2015?",
+        company_id="financebench_amd",
+        target_periods=["2015FY"],
+        max_followup_rounds=0,
+    )
+    subquestion = ResearchSubquestion(
+        question_id="q1",
+        text="What is AMD's total revenue for FY 2015?",
+        lane=ResearchLane.HARD_FACT,
+        priority=1,
+        fact_slot="revenue_fy2015",
+        metric_family="revenue",
+        needs_numeric_verification=True,
+        max_rounds=0,
+    )
+    chunk = RetrievedChunk(
+        chunk_id="c1",
+        text="AMD discussed demand trends.",
+        source_id="amd_2015_10k",
+        page=None,
+        score=1.0,
+        bm25_rank=0,
+        dense_rank=0,
+        rerank_score=1.0,
+        company="financebench_amd",
+        period="2015FY",
+        source_type="annual_report",
+        is_primary=True,
+        trust_level=5,
+        metric_signals=["narrative"],
+        content_type="qualitative",
+    )
+
+    monkeypatch.setattr(controller, "_retrieve_queries", lambda *args, **kwargs: [chunk])
+    monkeypatch.setattr(
+        controller,
+        "_assess_evidence",
+        lambda *args, **kwargs: EvidenceAssessment(
+            valid_chunk_count=1,
+            best_entailment=0.60,
+            mean_entailment=0.60,
+            best_support=0.60,
+            mean_support=0.60,
+            numeric_match=False,
+            metric_match=False,
+            high_trust_hit=True,
+            sufficient=False,
+            insufficient=True,
+            reasons=[
+                "Target metric or numeric evidence was not found in retrieved chunks.",
+                "Best support 0.60 below hard-fact threshold.",
+            ],
+            matched_chunk_ids=["c1"],
+        ),
+    )
+    calls = {"count": 0}
+
+    def _should_not_run(*args, **kwargs):
+        calls["count"] += 1
+        return '{"verdict":"sufficient","rationale":"Should never be used."}'
+
+    monkeypatch.setattr("agent.research_controller.generate_text_response", _should_not_run)
+
+    replay = ResearchReplayRecord(task=task)
+    llm_budget = {"used": 0, "max": 1}
+    result = controller._execute_subquestion(
+        task=task,
+        subquestion=subquestion,
+        retriever=object(),
+        llm_budget=llm_budget,
+        replay=replay,
+    )
+
+    assert result.status == ResearchQuestionStatus.REFUSED
+    assert calls["count"] == 0
+    assert llm_budget["used"] == 0
+
+
+def test_execute_subquestion_llm_gray_zone_review_can_promote_semantic_reasoning(monkeypatch):
+    controller = ResearchController(load_models=False, demo_mode=True)
+    controller.use_stub_llm = False
+    controller.client = object()
+    task = ResearchTask(
+        query="What drove revenue change as of the FY22 for AMD?",
+        company_id="financebench_amd",
+        target_periods=["2022FY"],
+        max_followup_rounds=0,
+    )
+    subquestion = ResearchSubquestion(
+        question_id="q4",
+        text="What were the primary drivers of the revenue change for AMD in FY 2022?",
+        lane=ResearchLane.SEMANTIC,
+        priority=1,
+        fact_slot="revenue_change_drivers",
+        metric_family="revenue",
+        needs_numeric_verification=False,
+        max_rounds=0,
+    )
+    chunk = RetrievedChunk(
+        chunk_id="c1",
+        text="Revenue growth was primarily driven by the inclusion of Xilinx embedded product revenue following the acquisition in February 2022.",
+        source_id="amd_2022_10k",
+        page=None,
+        score=1.0,
+        bm25_rank=0,
+        dense_rank=0,
+        rerank_score=1.0,
+        company="financebench_amd",
+        period="2022FY",
+        source_type="annual_report",
+        is_primary=True,
+        trust_level=5,
+        metric_signals=["revenue"],
+        content_type="mixed",
+    )
+
+    monkeypatch.setattr(controller, "_retrieve_queries", lambda *args, **kwargs: [chunk])
+    monkeypatch.setattr(
+        controller,
+        "_assess_evidence",
+        lambda *args, **kwargs: EvidenceAssessment(
+            valid_chunk_count=1,
+            best_entailment=0.52,
+            mean_entailment=0.52,
+            best_support=0.52,
+            mean_support=0.52,
+            numeric_match=False,
+            metric_match=True,
+            high_trust_hit=True,
+            sufficient=False,
+            insufficient=True,
+            reasons=["Mean support 0.52 below semantic threshold."],
+            matched_chunk_ids=["c1"],
+        ),
+    )
+    monkeypatch.setattr(
+        "agent.research_controller.generate_text_response",
+        lambda *args, **kwargs: '{"verdict":"sufficient","rationale":"The filing directly states the main revenue driver for FY2022."}',
+    )
+
+    replay = ResearchReplayRecord(task=task)
+    llm_budget = {"used": 0, "max": 1}
+    result = controller._execute_subquestion(
+        task=task,
+        subquestion=subquestion,
+        retriever=object(),
+        llm_budget=llm_budget,
+        replay=replay,
+    )
+
+    assert result.status == ResearchQuestionStatus.COMPLETED
+    assert result.assessments[-1].sufficient is True
+    assert any(decision.decision_type == "llm_gray_zone_review" for decision in replay.decisions)
+
+
 def test_render_structured_answer_derives_atomic_hard_fact_from_chunk_blob():
     controller = ResearchController(load_models=False, demo_mode=True)
     result = ResearchQuestionResult(
@@ -1760,6 +2268,122 @@ def test_render_structured_answer_derives_atomic_semantic_financial_claim_from_c
 
     assert "Our revenue model is primarily based on customer consumption" in rendered
     assert "Fastly's revenue model is primarily based on customer consumption" not in rendered
+
+
+def test_build_executive_summary_synthesizes_fixed_asset_turnover_from_completed_operands():
+    controller = ResearchController(load_models=False, demo_mode=True)
+    task = ResearchTask(
+        query=(
+            "What is the FY2019 fixed asset turnover ratio for Activision Blizzard? "
+            "Fixed asset turnover ratio is defined as: FY2019 revenue / "
+            "(average PP&E between FY2018 and FY2019)."
+        ),
+        company_id="financebench_activision_blizzard",
+        target_periods=["2019FY"],
+    )
+    completed = [
+        ResearchQuestionResult(
+            subquestion=ResearchSubquestion(
+                question_id="q1",
+                text="What is Activision Blizzard's total revenue for FY2019?",
+                lane=ResearchLane.HARD_FACT,
+                priority=1,
+                fact_slot="revenue_fy2019",
+                metric_family="revenue",
+                needs_numeric_verification=True,
+            ),
+            status=ResearchQuestionStatus.COMPLETED,
+            evidence=[
+                RetrievedChunk(
+                    chunk_id="c1",
+                    text="Total revenue was $7,500 million.",
+                    source_id="activisionblizzard_2019_10k",
+                    page=None,
+                    score=1.0,
+                    bm25_rank=0,
+                    dense_rank=0,
+                    rerank_score=1.0,
+                    company="financebench_activision_blizzard",
+                    period="2019FY",
+                    source_type="annual_report",
+                    is_primary=True,
+                    trust_level=5,
+                    metric_signals=["revenue"],
+                    content_type="quantitative",
+                )
+            ],
+            supported_content="- Revenue was $7,500 million. [Chunk: c1] [Source: activisionblizzard_2019_10k]",
+        ),
+        ResearchQuestionResult(
+            subquestion=ResearchSubquestion(
+                question_id="q2",
+                text="What is Activision Blizzard's net property, plant, and equipment (PP&E) balance as of the end of FY2018?",
+                lane=ResearchLane.HARD_FACT,
+                priority=1,
+                fact_slot="pp_and_e_fy2018",
+                metric_family="pp_and_e",
+                needs_numeric_verification=True,
+            ),
+            status=ResearchQuestionStatus.COMPLETED,
+            evidence=[
+                RetrievedChunk(
+                    chunk_id="c2",
+                    text="Property, plant and equipment, net was $180 million.",
+                    source_id="activisionblizzard_2019_10k",
+                    page=None,
+                    score=1.0,
+                    bm25_rank=0,
+                    dense_rank=0,
+                    rerank_score=1.0,
+                    company="financebench_activision_blizzard",
+                    period="2019FY",
+                    source_type="annual_report",
+                    is_primary=True,
+                    trust_level=5,
+                    metric_signals=["pp_and_e"],
+                    content_type="quantitative",
+                )
+            ],
+            supported_content="- Net property, plant and equipment was $180 million. [Chunk: c2] [Source: activisionblizzard_2019_10k]",
+        ),
+        ResearchQuestionResult(
+            subquestion=ResearchSubquestion(
+                question_id="q3",
+                text="What is Activision Blizzard's net property, plant, and equipment (PP&E) balance as of the end of FY2019?",
+                lane=ResearchLane.HARD_FACT,
+                priority=1,
+                fact_slot="pp_and_e_fy2019",
+                metric_family="pp_and_e",
+                needs_numeric_verification=True,
+            ),
+            status=ResearchQuestionStatus.COMPLETED,
+            evidence=[
+                RetrievedChunk(
+                    chunk_id="c3",
+                    text="Property, plant and equipment, net was $220 million.",
+                    source_id="activisionblizzard_2019_10k",
+                    page=None,
+                    score=1.0,
+                    bm25_rank=0,
+                    dense_rank=0,
+                    rerank_score=1.0,
+                    company="financebench_activision_blizzard",
+                    period="2019FY",
+                    source_type="annual_report",
+                    is_primary=True,
+                    trust_level=5,
+                    metric_signals=["pp_and_e"],
+                    content_type="quantitative",
+                )
+            ],
+            supported_content="- Net property, plant and equipment was $220 million. [Chunk: c3] [Source: activisionblizzard_2019_10k]",
+        ),
+    ]
+
+    summary = controller._build_executive_summary(task, completed, {"used": 0, "max": task.llm_call_budget})
+
+    assert "fixed asset turnover ratio was 37.5" in summary.lower()
+    assert "[Chunk: c1] [Source: activisionblizzard_2019_10k]" in summary
 
 
 def test_rewrite_legacy_answer_derives_atomic_hard_fact_from_cited_lines():

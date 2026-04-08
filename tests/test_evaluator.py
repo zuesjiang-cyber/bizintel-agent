@@ -1,9 +1,11 @@
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
+import sys
 
 
 EVALUATOR_PATH = Path(__file__).resolve().parents[1] / "eval" / "evaluator.py"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 SPEC = importlib.util.spec_from_file_location("bizintel_eval_evaluator", EVALUATOR_PATH)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC and SPEC.loader
@@ -207,6 +209,123 @@ def test_score_markdown_uses_fallback_extraction_for_cited_bullet_fragments():
 
     assert metrics["total_claims"] == 1
     assert metrics["unsupported_claim_rate"] < 1.0
+
+
+def test_score_markdown_can_upgrade_gray_claim_with_llm_judge():
+    claim = MODULE.Claim(
+        claim_id="c1",
+        text="Revenue growth was driven by data center demand.",
+        section="memo",
+        cited_sources=["amd_2022_10k"],
+    )
+
+    class FakeExtractor:
+        def extract_claims(self, markdown, section):
+            return [claim]
+
+    class FakeVerifier:
+        def verify_memo(self, claims, evidence_store):
+            return [
+                SimpleNamespace(
+                    confidence=SimpleNamespace(value="weak"),
+                    nli_score=0.35,
+                    numeric_verified=None,
+                    supporting_evidence=["Data Center segment revenue increased due to EPYC server processor sales."],
+                    explanation="borderline entailment",
+                    failure_reason="low_entailment",
+                    supporting_source_ids=["amd_2022_10k"],
+                    supporting_chunk_ids=["chunk-1"],
+                    primary_source_supported=True,
+                )
+            ]
+
+        def summary_stats(self, verification_results):
+            return {
+                "total_claims": 1,
+                "citation_marker_coverage": 1.0,
+                "verified_claim_coverage": 0.0,
+                "avg_nli_score": 0.35,
+            }
+
+    class FakeJudge:
+        def adjudicate_claim_support(self, **kwargs):
+            return {"support_label": "strong_support", "reason": "Direct support from the cited filing excerpt."}
+
+    metrics = score_markdown(
+        "Revenue growth was driven by data center demand. [Source: amd_2022_10k]",
+        ["data center"],
+        {"amd_2022_10k": [{"text": "Data Center segment revenue increased due to EPYC server processor sales.", "source_type": "annual_report", "is_primary": True}]},
+        question_text="What drove revenue change as of FY22 for AMD?",
+        extractor=FakeExtractor(),
+        verifier=FakeVerifier(),
+        judge=FakeJudge(),
+    )
+
+    assert metrics["strong_support_rate"] == 1.0
+    assert metrics["claim_diagnostics"][0]["support_label"] == "strong_support"
+    assert metrics["claim_diagnostics"][0]["llm_adjudicated"] is True
+
+
+def test_score_markdown_does_not_override_numeric_mismatch_with_llm_judge():
+    claim = MODULE.Claim(
+        claim_id="c1",
+        text="Revenue was $5 billion.",
+        section="memo",
+        cited_sources=["amd_2022_10k"],
+        contains_numbers=True,
+        extracted_numbers=["$5 billion"],
+    )
+
+    class FakeExtractor:
+        def extract_claims(self, markdown, section):
+            return [claim]
+
+    class FakeVerifier:
+        def verify_memo(self, claims, evidence_store):
+            return [
+                SimpleNamespace(
+                    confidence=SimpleNamespace(value="unsupported"),
+                    nli_score=0.2,
+                    numeric_verified=False,
+                    supporting_evidence=["Revenue was $4 billion."],
+                    explanation="numeric mismatch",
+                    failure_reason="numeric_mismatch",
+                    supporting_source_ids=["amd_2022_10k"],
+                    supporting_chunk_ids=["chunk-1"],
+                    primary_source_supported=True,
+                )
+            ]
+
+        def summary_stats(self, verification_results):
+            return {
+                "total_claims": 1,
+                "citation_marker_coverage": 1.0,
+                "verified_claim_coverage": 0.0,
+                "avg_nli_score": 0.2,
+            }
+
+    class FakeJudge:
+        def __init__(self):
+            self.calls = 0
+
+        def adjudicate_claim_support(self, **kwargs):
+            self.calls += 1
+            return {"support_label": "strong_support", "reason": "Should not be used."}
+
+    judge = FakeJudge()
+    metrics = score_markdown(
+        "Revenue was $5 billion. [Source: amd_2022_10k]",
+        ["$5 billion"],
+        {"amd_2022_10k": [{"text": "Revenue was $4 billion.", "source_type": "annual_report", "is_primary": True}]},
+        question_text="What was AMD revenue?",
+        extractor=FakeExtractor(),
+        verifier=FakeVerifier(),
+        judge=judge,
+    )
+
+    assert judge.calls == 0
+    assert metrics["strong_support_rate"] == 0.0
+    assert metrics["claim_diagnostics"][0]["support_label"] == "unsupported"
 
 
 def test_score_research_trace_reports_completion_and_slot_coverage():

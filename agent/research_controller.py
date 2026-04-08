@@ -1,7 +1,7 @@
 import json
 import logging
 import re
-from typing import Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from agent.config import settings
 from agent.llm_utils import (
@@ -683,6 +683,48 @@ class ResearchController:
                 )
                 next_priority += 1
 
+        if self._targets_product_service_catalog_question(task):
+            if not has_proposal(
+                lambda item: (
+                    str(item.get("lane", "")).lower() == "semantic"
+                    and any(
+                        token in self._normalize_text(" ".join([str(item.get("fact_slot", "")), str(item.get("text", ""))]))
+                        for token in ("product", "products", "service", "services", "offering", "offerings")
+                    )
+                )
+            ):
+                period_label = self._task_period_label(task, include_latest_placeholder=False) or "the target period"
+                augmented.append(
+                    {
+                        "text": f"What major products, platforms, and services does {task.company_id} explicitly say it sells in {period_label}?",
+                        "lane": "semantic",
+                        "priority": next_priority,
+                        "fact_slot": f"{task.company_id}_products_and_services",
+                        "metric_family": "business_model",
+                        "needs_numeric_verification": False,
+                    }
+                )
+                next_priority += 1
+
+        if self._targets_customer_concentration_question(task):
+            if not has_proposal(
+                lambda item: (
+                    any(token in self._normalize_text(" ".join([str(item.get("fact_slot", "")), str(item.get("text", ""))])) for token in ("customer concentration", "major customer", "customer accounted"))
+                )
+            ):
+                period_label = self._task_period_label(task, include_latest_placeholder=False) or "the target period"
+                augmented.append(
+                    {
+                        "text": f"Did {task.company_id} disclose customer concentration in {period_label}, and if so what percentage of revenue did the customer represent?",
+                        "lane": "hard_fact",
+                        "priority": next_priority,
+                        "fact_slot": f"{task.company_id}_customer_concentration",
+                        "metric_family": "revenue",
+                        "needs_numeric_verification": True,
+                    }
+                )
+                next_priority += 1
+
         if any(phrase in query_lower for phrase in ("revenue mix", "breakdown", "components")):
             if not has_proposal(
                 lambda item: (
@@ -802,7 +844,22 @@ class ResearchController:
             lane = "semantic"
             metric_family = "management" if any(token in lowered for token in ("commentary", "tone", "outlook", "kpi")) else "strategy"
             question = f"What source-backed evidence addresses the required slot '{slot_text}' for {task.company_id}?"
-        elif any(token in lowered for token in ("business model", "monetization", "product breadth")):
+        elif any(
+            token in lowered
+            for token in (
+                "business model",
+                "monetization",
+                "product breadth",
+                "product",
+                "products",
+                "service",
+                "services",
+                "offering",
+                "offerings",
+                "platform",
+                "platforms",
+            )
+        ):
             lane = "semantic"
             metric_family = "business_model"
             question = f"What source-backed evidence addresses the required slot '{slot_text}' for {task.company_id}?"
@@ -896,6 +953,15 @@ class ResearchController:
             retrieved = self._retrieve_queries(task, subquestion, queries, retriever, round_trace)
             result.evidence = self._dedupe_chunks(result.evidence + retrieved, task.max_evidence_per_question)
             assessment = self._assess_evidence(task, subquestion, result.evidence)
+            llm_gray_zone_review = None
+            if not assessment.sufficient and total_rounds > subquestion.max_rounds:
+                assessment, llm_gray_zone_review = self._maybe_llm_review_gray_zone_assessment(
+                    task=task,
+                    subquestion=subquestion,
+                    result=result,
+                    assessment=assessment,
+                    llm_budget=llm_budget,
+                )
             result.assessments.append(assessment)
             round_trace["assessment"] = {
                 "valid_chunk_count": assessment.valid_chunk_count,
@@ -911,6 +977,16 @@ class ResearchController:
                 "conflict": assessment.conflict,
                 "reasons": assessment.reasons,
             }
+            if llm_gray_zone_review is not None:
+                round_trace["llm_gray_zone_review"] = llm_gray_zone_review
+                replay.decisions.append(
+                    ResearchDecisionRecord(
+                        decision_type="llm_gray_zone_review",
+                        question_id=subquestion.question_id,
+                        reason=llm_gray_zone_review.get("reason", "gray-zone evidence review"),
+                        payload=llm_gray_zone_review,
+                    )
+                )
             result.trace.append(round_trace)
 
             if assessment.sufficient:
@@ -920,8 +996,16 @@ class ResearchController:
                     ResearchDecisionRecord(
                         decision_type="complete",
                         question_id=subquestion.question_id,
-                        reason="sufficient evidence reached",
-                        payload={"round": total_rounds, "matched_chunk_ids": assessment.matched_chunk_ids},
+                        reason=(
+                            "sufficient evidence reached"
+                            if not (llm_gray_zone_review or {}).get("accepted")
+                            else "gray-zone evidence review accepted the evidence as sufficient"
+                        ),
+                        payload={
+                            "round": total_rounds,
+                            "matched_chunk_ids": assessment.matched_chunk_ids,
+                            "llm_gray_zone_review": bool((llm_gray_zone_review or {}).get("accepted")),
+                        },
                     )
                 )
                 break
@@ -965,6 +1049,180 @@ class ResearchController:
 
         result.subquestion = self._clone_subquestion(subquestion)
         return result
+
+    def _maybe_llm_review_gray_zone_assessment(
+        self,
+        *,
+        task: ResearchTask,
+        subquestion: ResearchSubquestion,
+        result: ResearchQuestionResult,
+        assessment: EvidenceAssessment,
+        llm_budget: dict,
+    ) -> tuple[EvidenceAssessment, Optional[dict]]:
+        if (
+            self.use_stub_llm
+            or self.client is None
+            or not settings.llm_judge_enabled
+            or assessment.sufficient
+            or assessment.conflict
+            or assessment.valid_chunk_count <= 0
+        ):
+            return assessment, None
+        if not self._is_llm_gray_zone_candidate(task, subquestion, assessment):
+            return assessment, None
+        if not self._consume_llm_budget(llm_budget, reason="gray_zone_evidence_review"):
+            return assessment, None
+
+        prompt = self._build_gray_zone_review_prompt(task, subquestion, result, assessment)
+        try:
+            raw = generate_text_response(
+                self.client,
+                model=settings.openai_model,
+                system_prompt=(
+                    "You are a conservative financial evidence reviewer. "
+                    "Only mark evidence as sufficient when a careful analyst could answer with the provided chunks "
+                    "without inventing missing facts. Never override hard numeric or citation failures."
+                ),
+                user_prompt=prompt,
+                max_tokens=300,
+                temperature=0.0,
+                max_retries=settings.llm_request_max_retries,
+                response_format={"type": "json_object"},
+            )
+            payload = self._parse_json(raw)
+        except Exception as exc:
+            logger.warning("Skipping gray-zone evidence review after LLM failure: %s", exc)
+            return assessment, {
+                "reviewed": True,
+                "accepted": False,
+                "reason": f"LLM gray-zone review failed: {exc}",
+            }
+
+        verdict = str(payload.get("verdict", "")).strip().lower()
+        rationale = str(payload.get("rationale", "")).strip()
+        if verdict not in {"sufficient", "insufficient"}:
+            return assessment, {
+                "reviewed": True,
+                "accepted": False,
+                "reason": "LLM gray-zone review returned an invalid verdict.",
+                "raw": raw[:500],
+            }
+        if verdict != "sufficient":
+            return assessment, {
+                "reviewed": True,
+                "accepted": False,
+                "reason": rationale or "LLM gray-zone review kept the evidence below threshold.",
+            }
+
+        promoted = EvidenceAssessment(
+            valid_chunk_count=assessment.valid_chunk_count,
+            best_entailment=assessment.best_entailment,
+            mean_entailment=assessment.mean_entailment,
+            best_support=assessment.best_support,
+            mean_support=assessment.mean_support,
+            numeric_match=assessment.numeric_match,
+            metric_match=assessment.metric_match,
+            high_trust_hit=assessment.high_trust_hit,
+            sufficient=True,
+            insufficient=False,
+            conflict=False,
+            reasons=list(assessment.reasons) + [
+                rationale or "LLM gray-zone review accepted the evidence as sufficient.",
+            ],
+            matched_chunk_ids=list(assessment.matched_chunk_ids),
+        )
+        return promoted, {
+            "reviewed": True,
+            "accepted": True,
+            "reason": rationale or "LLM gray-zone review accepted the evidence as sufficient.",
+            "verdict": verdict,
+        }
+
+    def _is_llm_gray_zone_candidate(
+        self,
+        task: ResearchTask,
+        subquestion: ResearchSubquestion,
+        assessment: EvidenceAssessment,
+    ) -> bool:
+        blocking_prefixes = (
+            "No contract-valid evidence chunks were retrieved.",
+            "Target metric or numeric evidence was not found in retrieved chunks.",
+            "Conflicting evidence detected across top supporting chunks.",
+        )
+        if any(reason.startswith(blocking_prefixes) for reason in assessment.reasons):
+            return False
+
+        if subquestion.lane == ResearchLane.HARD_FACT:
+            threshold = self._hard_fact_support_threshold(task, subquestion)
+            lower_bound = max(0.34, threshold - 0.32)
+            return bool(
+                assessment.high_trust_hit
+                and (assessment.metric_match or assessment.numeric_match)
+                and assessment.best_support >= lower_bound
+            )
+
+        return bool(
+            assessment.high_trust_hit
+            and assessment.valid_chunk_count >= 1
+            and (assessment.mean_support >= 0.32 or assessment.best_support >= 0.45)
+        )
+
+    def _build_gray_zone_review_prompt(
+        self,
+        task: ResearchTask,
+        subquestion: ResearchSubquestion,
+        result: ResearchQuestionResult,
+        assessment: EvidenceAssessment,
+    ) -> str:
+        prioritized_chunks = [
+            chunk for chunk in result.evidence
+            if chunk.chunk_id in set(assessment.matched_chunk_ids)
+        ]
+        if not prioritized_chunks:
+            prioritized_chunks = list(result.evidence[:3])
+        else:
+            extra = [chunk for chunk in result.evidence if chunk.chunk_id not in set(assessment.matched_chunk_ids)]
+            prioritized_chunks = (prioritized_chunks + extra)[:3]
+
+        evidence_lines = []
+        for chunk in prioritized_chunks:
+            evidence_lines.append(
+                f"[Chunk: {chunk.chunk_id}] [Source: {chunk.source_id}] "
+                f"[Primary: {'yes' if chunk.is_primary else 'no'}] "
+                f"[SourceType: {chunk.source_type or 'unknown'}] "
+                f"{chunk.text}"
+            )
+
+        prompt = {
+            "task": "Decide whether the evidence is sufficient to answer the financial research subquestion conservatively.",
+            "company": task.company_id,
+            "period": self._task_period_label(task, include_latest_placeholder=False),
+            "lane": subquestion.lane.value,
+            "subquestion": subquestion.text,
+            "fact_slot": subquestion.fact_slot,
+            "metric_family": subquestion.metric_family,
+            "assessment": {
+                "valid_chunk_count": assessment.valid_chunk_count,
+                "best_support": assessment.best_support,
+                "mean_support": assessment.mean_support,
+                "numeric_match": assessment.numeric_match,
+                "metric_match": assessment.metric_match,
+                "high_trust_hit": assessment.high_trust_hit,
+                "reasons": assessment.reasons,
+            },
+            "instructions": [
+                "Return sufficient only if the answer can be stated conservatively using the provided evidence.",
+                "For hard-fact questions, allow compositional reasoning only when the needed figures clearly appear in the evidence.",
+                "For semantic questions, require direct management commentary or explicit causal language.",
+                "Do not approve evidence when key values, periods, or comparison dimensions are missing.",
+            ],
+            "evidence": evidence_lines,
+            "output_schema": {
+                "verdict": "sufficient or insufficient",
+                "rationale": "short explanation",
+            },
+        }
+        return json.dumps(prompt, ensure_ascii=False)
 
     def _retrieve_queries(
         self,
@@ -1186,6 +1444,20 @@ class ResearchController:
         context = " ".join(part for part in [task.company_id, period_label] if part).strip()
         hypotheses = []
         slot_basis = self._subquestion_text_basis(subquestion)
+        if self._targets_product_service_catalog_question(task, subquestion):
+            hypotheses.extend(
+                [
+                    f"The source text explicitly describes the major products, platforms, or services sold by {task.company_id} for {context}.",
+                    f"The source text identifies the main product categories, offerings, or end markets for {task.company_id} for {context}.",
+                ]
+            )
+        elif self._targets_customer_concentration_question(task, subquestion):
+            hypotheses.extend(
+                [
+                    f"The source text discloses whether a single customer represented 10% or more of revenue for {context}.",
+                    f"The source text reports customer concentration and the related revenue percentage for {context}.",
+                ]
+            )
         if "business_model" in slot_basis or any(
             phrase in subquestion.text.lower()
             for phrase in ("make money", "business model", "monetization")
@@ -1441,6 +1713,25 @@ class ResearchController:
             return 0.0
         return len(slot_tokens & hay_tokens) / len(slot_tokens)
 
+    def _question_overlap_ratio(self, subquestion: ResearchSubquestion, text: str) -> float:
+        question_tokens = self._summary_tokens(
+            " ".join(
+                part
+                for part in [
+                    subquestion.text,
+                    subquestion.fact_slot,
+                    subquestion.metric_family,
+                ]
+                if part
+            )
+        )
+        if not question_tokens:
+            return 0.0
+        hay_tokens = self._summary_tokens(text)
+        if not hay_tokens:
+            return 0.0
+        return len(question_tokens & hay_tokens) / len(question_tokens)
+
     def _detect_conflict(
         self,
         subquestion: ResearchSubquestion,
@@ -1588,6 +1879,22 @@ class ResearchController:
                 )
             else:
                 targeted.append(f"{task.company_id} {period_hint} earnings call prepared remarks revenue mix".strip())
+        elif self._targets_product_service_catalog_question(task, subquestion):
+            targeted.extend(
+                [
+                    f"{task.company_id} {period_hint} products services offerings annual report".strip(),
+                    f"{task.company_id} {period_hint} products platforms segments business overview".strip(),
+                    f"{task.company_id} {period_hint} what does {task.company_id} sell".strip(),
+                ]
+            )
+        elif self._targets_customer_concentration_question(task, subquestion):
+            targeted.extend(
+                [
+                    f"{task.company_id} {period_hint} customer concentration major customer percentage revenue".strip(),
+                    f"{task.company_id} {period_hint} customer accounted for revenue concentration".strip(),
+                    f"{task.company_id} {period_hint} significant customer 10 percent revenue".strip(),
+                ]
+            )
         elif self._targets_liquidity_or_working_capital(task, subquestion):
             targeted.extend(self._liquidity_component_queries(task, subquestion))
         elif self._targets_ranking_or_comparison_hard_fact(task, subquestion):
@@ -1622,6 +1929,65 @@ class ResearchController:
     def _is_revenue_mix_question(self, subquestion: ResearchSubquestion) -> bool:
         basis = self._subquestion_text_basis(subquestion)
         return any(token in basis for token in ("revenue_mix", "revenue mix", "breakdown", "components", "network services", "security revenue", "other revenue"))
+
+    def _targets_product_service_catalog_question(
+        self,
+        task: ResearchTask,
+        subquestion: Optional[ResearchSubquestion] = None,
+    ) -> bool:
+        basis = task.query.lower()
+        if subquestion is not None:
+            basis = f"{basis} {self._subquestion_text_basis(subquestion)}"
+        mentions_catalog = any(
+            token in basis
+            for token in (
+                "product",
+                "products",
+                "service",
+                "services",
+                "offering",
+                "offerings",
+                "platform",
+                "platforms",
+                "sell",
+                "sells",
+            )
+        )
+        asks_catalog = any(
+            token in basis
+            for token in (
+                "what are",
+                "which are",
+                "what does",
+                "what do",
+                "major",
+                "main",
+                "core",
+                "primary",
+            )
+        )
+        excludes_mix = not any(token in basis for token in ("revenue mix", "breakdown", "components"))
+        return mentions_catalog and asks_catalog and excludes_mix
+
+    def _targets_customer_concentration_question(
+        self,
+        task: ResearchTask,
+        subquestion: Optional[ResearchSubquestion] = None,
+    ) -> bool:
+        basis = task.query.lower()
+        if subquestion is not None:
+            basis = f"{basis} {self._subquestion_text_basis(subquestion)}"
+        return any(
+            token in basis
+            for token in (
+                "customer concentration",
+                "major customer",
+                "significant customer",
+                "customer accounted",
+                "10% of revenue",
+                "ten percent of revenue",
+            )
+        )
 
     def _is_income_statement_revenue_question(self, subquestion: ResearchSubquestion) -> bool:
         basis = self._subquestion_text_basis(subquestion)
@@ -1689,7 +2055,7 @@ class ResearchController:
         task: ResearchTask,
         subquestion: ResearchSubquestion,
     ) -> bool:
-        basis = f"{task.query} {self._subquestion_text_basis(subquestion)}"
+        basis = self._subquestion_text_basis(subquestion)
         lowered = basis.lower()
         return any(
             token in lowered
@@ -1703,9 +2069,14 @@ class ResearchController:
                 "growth",
                 "positive",
                 "negative",
-                "between",
-                "vs",
-                "versus",
+                "what drove",
+                "driver",
+                "drivers",
+                "due to",
+                "because",
+                "reason",
+                "reasons",
+                "why did",
             )
         )
 
@@ -1849,11 +2220,13 @@ class ResearchController:
                     )
                 continue
             for item in batch:
+                missing_structured_answer = False
                 if not item.answer_text:
                     item.answer_text = (
                         "Insufficient evidence in the source pack: "
                         "Model did not return a verifiable structured answer."
                     )
+                    missing_structured_answer = True
                     item.trace.append(
                         {
                             "stage": "answer_generation",
@@ -1862,6 +2235,31 @@ class ResearchController:
                         }
                     )
                 self._verify_answer(item)
+                if missing_structured_answer:
+                    replay.decisions.append(
+                        ResearchDecisionRecord(
+                            decision_type="answer_generation_contract_failure",
+                            question_id=item.subquestion.question_id,
+                            reason="batch answer did not return a structured claim payload for this question",
+                            payload={
+                                "lane": item.subquestion.lane.value,
+                                "recovered_from_evidence": item.status == ResearchQuestionStatus.COMPLETED,
+                            },
+                        )
+                    )
+                    if item.status == ResearchQuestionStatus.COMPLETED:
+                        replay.decisions.append(
+                            ResearchDecisionRecord(
+                                decision_type="answer_generated",
+                                question_id=item.subquestion.question_id,
+                                reason="missing structured payload recovered from evidence-bound fallback",
+                                payload={
+                                    "lane": item.subquestion.lane.value,
+                                    "recovered_from_evidence": True,
+                                },
+                            )
+                        )
+                    continue
                 if "Model did not return a verifiable structured answer." in item.answer_text:
                     replay.decisions.append(
                         ResearchDecisionRecord(
@@ -1929,6 +2327,7 @@ class ResearchController:
             "For hard-fact questions, use primary sources for numeric or financial claims. If only weaker evidence exists, return status=`insufficient`.",
             "For hard-fact questions, claim 1 must answer the question directly before any supporting detail.",
             "Use question-shaped direct answers such as: `Yes, ...`, `<segment> had the highest net income`, `<company>'s quick ratio was 1.57`, or `<activity> brought in the most cash flow`.",
+            "For pure numeric extraction or formula questions, claim 1 must state the final requested value or ratio, not an intermediate driver, nearby table fragment, or unrelated numeric sentence.",
             "If one provided chunk contains all figures needed for a calculation, comparison, or ranking, you may compute the direct conclusion and cite that single chunk.",
             "If the conclusion depends on more than one provided chunk, cite all required chunks in order using chunk_ids/source_ids.",
             "Do not copy raw table fragments, headers, or line-item blobs when you can safely restate the conclusion.",
@@ -1965,8 +2364,6 @@ class ResearchController:
         return build_stub_section_analysis(fake_step, result.subquestion.text, result.evidence[:3])
 
     def _verify_answer(self, result: ResearchQuestionResult) -> None:
-        result.answer_text = self._sanitize_answer_for_verification(result.answer_text)
-        claims = self.claim_extractor.extract_claims(result.answer_text, result.subquestion.question_id)
         evidence_store: Dict[str, List[object]] = {}
         for chunk in result.evidence:
             evidence_store.setdefault(chunk.source_id, []).append(
@@ -1978,27 +2375,68 @@ class ResearchController:
                     "is_primary": chunk.is_primary,
                 }
             )
-        if not claims:
-            result.status = ResearchQuestionStatus.REFUSED
-            result.subquestion.status = ResearchQuestionStatus.REFUSED
-            result.refusal_reason = (
-                "Generated answer did not produce any verifiable cited claims."
-                if "insufficient evidence" not in result.answer_text.lower()
-                else result.answer_text.strip()
+
+        attempted_recovery = False
+        while True:
+            result.answer_text = self._sanitize_answer_for_verification(result.answer_text)
+            claims = self.claim_extractor.extract_claims(
+                result.answer_text,
+                result.subquestion.question_id,
+                focus_text=result.subquestion.text,
+                max_claims=3,
             )
-            result.supported_content = ""
-            result.verified_claims = []
+            if not claims:
+                fallback = self._fallback_answer_from_evidence(result, allow_partial=True) if not attempted_recovery else ""
+                if fallback and fallback != result.answer_text:
+                    result.trace.append(
+                        {
+                            "stage": "verification_recovery",
+                            "status": "fallback_answer_used",
+                            "question_id": result.subquestion.question_id,
+                        }
+                    )
+                    result.answer_text = fallback
+                    attempted_recovery = True
+                    continue
+                result.status = ResearchQuestionStatus.REFUSED
+                result.subquestion.status = ResearchQuestionStatus.REFUSED
+                result.refusal_reason = (
+                    "Generated answer did not produce any verifiable cited claims."
+                    if "insufficient evidence" not in result.answer_text.lower()
+                    else result.answer_text.strip()
+                )
+                result.supported_content = ""
+                result.verified_claims = []
+                return
+
+            verification_results = self.verifier.verify_memo(claims, evidence_store)
+            result.verified_claims = verification_results
+            result.supported_content = self.report_writer._apply_verification_gating(
+                result.answer_text,
+                verification_results,
+            )
+            all_unsupported = bool(verification_results) and all(
+                item.confidence == ConfidenceLevel.UNSUPPORTED
+                for item in verification_results
+            )
+            if all_unsupported and not attempted_recovery:
+                fallback = self._fallback_answer_from_evidence(result, allow_partial=True)
+                if fallback and fallback != result.answer_text:
+                    result.trace.append(
+                        {
+                            "stage": "verification_recovery",
+                            "status": "fallback_answer_used",
+                            "question_id": result.subquestion.question_id,
+                        }
+                    )
+                    result.answer_text = fallback
+                    attempted_recovery = True
+                    continue
+            if all_unsupported:
+                result.status = ResearchQuestionStatus.REFUSED
+                result.subquestion.status = ResearchQuestionStatus.REFUSED
+                result.refusal_reason = "Generated answer did not survive verification."
             return
-        verification_results = self.verifier.verify_memo(claims, evidence_store) if claims else []
-        result.verified_claims = verification_results
-        result.supported_content = self.report_writer._apply_verification_gating(
-            result.answer_text,
-            verification_results,
-        )
-        if verification_results and all(item.confidence == ConfidenceLevel.UNSUPPORTED for item in verification_results):
-            result.status = ResearchQuestionStatus.REFUSED
-            result.subquestion.status = ResearchQuestionStatus.REFUSED
-            result.refusal_reason = "Generated answer did not survive verification."
 
     def _render_structured_answer(
         self,
@@ -2033,9 +2471,10 @@ class ResearchController:
                     ):
                         continue
                     if not self._should_preserve_model_statement(result.subquestion, statement):
-                        derived_statement = ""
-                        if len(cited_chunks) == 1:
-                            derived_statement = self._derive_atomic_claim_from_chunk(result.subquestion, cited_chunks[0])
+                        derived_statement = self._derive_question_aligned_claim_from_chunks(
+                            result.subquestion,
+                            cited_chunks,
+                        )
                         if derived_statement:
                             statement = derived_statement
                         else:
@@ -2103,9 +2542,10 @@ class ResearchController:
                 continue
             statement = self._normalize_claim_sentence(line)
             if not self._should_preserve_model_statement(result.subquestion, statement):
-                derived_statement = ""
-                if len(cited_chunks) == 1:
-                    derived_statement = self._derive_atomic_claim_from_chunk(result.subquestion, cited_chunks[0])
+                derived_statement = self._derive_question_aligned_claim_from_chunks(
+                    result.subquestion,
+                    cited_chunks,
+                )
                 if derived_statement:
                     statement = derived_statement
                 else:
@@ -2120,6 +2560,19 @@ class ResearchController:
                 continue
             rewritten.append(f"- {statement}{self._format_citation_pairs(citation_pairs)}")
         return "\n".join(dict.fromkeys(rewritten)).strip()
+
+    def _derive_question_aligned_claim_from_chunks(
+        self,
+        subquestion: ResearchSubquestion,
+        chunks: Sequence[RetrievedChunk],
+    ) -> str:
+        if subquestion.lane == ResearchLane.HARD_FACT:
+            direct_statement = self._build_direct_hard_fact_statement(subquestion, chunks)
+            if direct_statement:
+                return direct_statement
+        if len(chunks) == 1:
+            return self._derive_atomic_claim_from_chunk(subquestion, chunks[0])
+        return ""
 
     def _extract_structured_claim_citation_pairs(
         self,
@@ -2198,14 +2651,19 @@ class ResearchController:
             cleaned += "."
         return cleaned
 
-    def _fallback_answer_from_evidence(self, result: ResearchQuestionResult) -> str:
+    def _fallback_answer_from_evidence(
+        self,
+        result: ResearchQuestionResult,
+        *,
+        allow_partial: bool = False,
+    ) -> str:
         latest = result.assessments[-1] if result.assessments else None
-        if not latest or not latest.sufficient:
+        if not allow_partial and (not latest or not latest.sufficient):
             return ""
         chunk_map = {chunk.chunk_id: chunk for chunk in result.evidence[:8]}
         ordered_chunks = [
             chunk_map[chunk_id]
-            for chunk_id in (latest.matched_chunk_ids or [])
+            for chunk_id in ((latest.matched_chunk_ids if latest else []) or [])
             if chunk_id in chunk_map
         ] or result.evidence[:2]
         if result.subquestion.lane == ResearchLane.HARD_FACT:
@@ -2225,36 +2683,101 @@ class ResearchController:
         subquestion: ResearchSubquestion,
         chunks: Sequence[RetrievedChunk],
     ) -> str:
+        statement = self._build_direct_hard_fact_statement(subquestion, chunks)
+        if not statement:
+            return ""
+        citation_chunks = [chunk for chunk in chunks if chunk]
+        if not citation_chunks:
+            return ""
+        return (
+            f"- {statement}"
+            + self._format_citation_pairs([(chunk.chunk_id, chunk.source_id) for chunk in citation_chunks])
+        )
+
+    def _build_direct_hard_fact_statement(
+        self,
+        subquestion: ResearchSubquestion,
+        chunks: Sequence[RetrievedChunk],
+    ) -> str:
         basis = self._subquestion_text_basis(subquestion)
         if "quick ratio" in basis:
             for chunk in chunks:
                 detail = self._extract_quick_ratio_detail(chunk.text)
                 if not detail:
                     continue
-                statement = (
+                return (
                     f"The quick ratio was {detail['ratio']}, based on {detail['explanation']}."
                 )
-                return f"- {statement} [Chunk: {chunk.chunk_id}] [Source: {chunk.source_id}]"
+        if "working capital ratio" in basis or "current ratio" in basis:
+            for chunk in chunks:
+                detail = self._extract_current_ratio_detail(chunk.text)
+                if not detail:
+                    continue
+                return (
+                    f"The working capital ratio was {detail['ratio']}, based on total current assets of "
+                    f"{detail['current_assets']} and total current liabilities of {detail['current_liabilities']}."
+                )
         if "working capital" in basis:
             for chunk in chunks:
                 detail = self._extract_working_capital_detail(chunk.text)
                 if not detail:
                     continue
-                statement = (
+                return (
                     f"The company had {detail['polarity']} working capital of {detail['working_capital']}, "
                     f"based on total current assets of {detail['current_assets']} and total current liabilities of {detail['current_liabilities']}."
                 )
-                return f"- {statement} [Chunk: {chunk.chunk_id}] [Source: {chunk.source_id}]"
         if any(token in basis for token in ("highest", "largest", "lowest", "smallest")):
             for chunk in chunks:
                 detail = self._extract_ranked_metric_detail(subquestion, chunk.text)
                 if not detail:
                     continue
-                statement = (
+                return (
                     f"{detail['winner']} had the {detail['direction']} {detail['metric']} at {detail['value']}."
                 )
-                return f"- {statement} [Chunk: {chunk.chunk_id}] [Source: {chunk.source_id}]"
+        if self._is_direct_numeric_extraction_question(subquestion):
+            line_item_detail = self._extract_line_item_detail(subquestion, chunks)
+            if line_item_detail:
+                return (
+                    f"{line_item_detail['display_name']} {line_item_detail['verb']} {line_item_detail['formatted_value']}."
+                )
         return ""
+
+    def _is_direct_numeric_extraction_question(self, subquestion: ResearchSubquestion) -> bool:
+        basis = self._subquestion_text_basis(subquestion)
+        if any(
+            token in basis
+            for token in (
+                "growth",
+                "driver",
+                "drivers",
+                "what are",
+                "revenue sources",
+                "primary revenue sources",
+                "revenue mix",
+                "breakdown",
+                "which segment",
+                "highest",
+                "lowest",
+                "largest",
+                "smallest",
+            )
+        ):
+            return False
+        return any(
+            token in basis
+            for token in (
+                "what is",
+                "how much",
+                "amount",
+                "balance",
+                "year end",
+                "end of fy",
+                "as of the end",
+                "exact",
+                "reported under",
+                "reported in the",
+            )
+        )
 
     def _extract_quick_ratio_detail(self, text: str) -> Optional[Dict[str, str]]:
         current_liabilities = self._extract_labeled_financial_value(text, ["total current liabilities"])
@@ -2304,6 +2827,144 @@ class ResearchController:
             "current_assets": current_assets[1],
             "current_liabilities": current_liabilities[1],
         }
+
+    def _extract_current_ratio_detail(self, text: str) -> Optional[Dict[str, str]]:
+        current_assets = self._extract_labeled_financial_value(text, ["total current assets"])
+        current_liabilities = self._extract_labeled_financial_value(text, ["total current liabilities"])
+        if current_assets is None or current_liabilities is None or current_liabilities[0] == 0:
+            return None
+        return {
+            "ratio": self._format_ratio_value(current_assets[0] / current_liabilities[0]),
+            "current_assets": current_assets[1],
+            "current_liabilities": current_liabilities[1],
+        }
+
+    def _extract_line_item_detail(
+        self,
+        subquestion: ResearchSubquestion,
+        chunks: Sequence[RetrievedChunk],
+    ) -> Optional[Dict[str, str]]:
+        for spec in self._candidate_line_item_specs(subquestion):
+            for chunk in chunks:
+                value = self._extract_labeled_financial_value(chunk.text, spec["labels"])
+                if value is None:
+                    continue
+                return {
+                    "display_name": spec["display_name"],
+                    "formatted_value": self._normalize_direct_line_item_value(
+                        spec,
+                        value[0],
+                        value[1],
+                        f"{chunk.text} {subquestion.text}",
+                    ),
+                    "verb": spec.get("verb", "was"),
+                    "chunk_id": chunk.chunk_id,
+                    "source_id": chunk.source_id,
+                }
+        return None
+
+    def _candidate_line_item_specs(self, subquestion: ResearchSubquestion) -> List[Dict[str, object]]:
+        basis = self._subquestion_text_basis(subquestion)
+        specs = [
+            {
+                "keywords": ("capital expenditure", "capital expenditures", "capex"),
+                "labels": ["capital expenditures", "capital expenditure"],
+                "display_name": "Capital expenditures",
+                "verb": "were",
+            },
+            {
+                "keywords": ("accounts payable",),
+                "labels": ["accounts payable"],
+                "display_name": "Accounts payable",
+                "verb": "were",
+            },
+            {
+                "keywords": ("inventories", "inventory"),
+                "labels": ["inventories", "inventory"],
+                "display_name": "Inventories",
+                "verb": "were",
+            },
+            {
+                "keywords": ("accounts receivable", "net ar", "receivables"),
+                "labels": ["accounts receivable, net", "accounts receivable", "receivables, net", "trade receivables, net"],
+                "display_name": "Accounts receivable, net",
+                "verb": "was",
+            },
+            {
+                "keywords": ("pp&e", "property, plant", "property and equipment", "ppne"),
+                "labels": [
+                    "property, plant and equipment, net",
+                    "property and equipment, net",
+                    "net property, plant and equipment",
+                    "property, plant and equipment",
+                ],
+                "display_name": "Net property, plant and equipment",
+            },
+            {
+                "keywords": ("total current liabilities",),
+                "labels": ["total current liabilities"],
+                "display_name": "Total current liabilities",
+                "verb": "were",
+            },
+            {
+                "keywords": ("total current assets",),
+                "labels": ["total current assets"],
+                "display_name": "Total current assets",
+                "verb": "were",
+            },
+            {
+                "keywords": ("total assets",),
+                "labels": ["total assets"],
+                "display_name": "Total assets",
+            },
+            {
+                "keywords": ("total liabilities",),
+                "labels": ["total liabilities"],
+                "display_name": "Total liabilities",
+            },
+            {
+                "keywords": ("depreciation", "amortization", "d&a"),
+                "labels": ["depreciation and amortization"],
+                "display_name": "Depreciation and amortization",
+            },
+            {
+                "keywords": ("operating income",),
+                "labels": ["operating income"],
+                "display_name": "Operating income",
+            },
+            {
+                "keywords": ("net income",),
+                "labels": ["net income"],
+                "display_name": "Net income",
+            },
+            {
+                "keywords": ("revenue", "net sales", "sales"),
+                "labels": ["total revenue", "net revenue", "net sales", "revenue", "sales"],
+                "display_name": "Revenue",
+            },
+            {
+                "keywords": ("cost of goods sold", "cogs", "cost of sales", "cost of revenue"),
+                "labels": ["cost of goods sold", "cost of sales", "cost of revenue"],
+                "display_name": "Cost of goods sold",
+            },
+        ]
+        return [
+            spec
+            for spec in specs
+            if any(keyword in basis for keyword in spec["keywords"])
+        ]
+
+    def _normalize_direct_line_item_value(
+        self,
+        spec: Dict[str, object],
+        numeric_value: float,
+        formatted_value: str,
+        reference_text: str,
+    ) -> str:
+        display_name = str(spec.get("display_name", "")).lower()
+        if display_name in {"capital expenditures", "depreciation and amortization"} and numeric_value < 0:
+            return self._format_financial_value(abs(numeric_value), reference_text)
+        return formatted_value
 
     def _extract_ranked_metric_detail(
         self,
@@ -2398,10 +3059,9 @@ class ResearchController:
         if "$" not in cleaned:
             cleaned = f"${cleaned}"
         if not re.search(r"\b(?:billion|million|thousand|bn|mn|b|m|k)\b", cleaned, re.IGNORECASE):
-            if re.search(r"\bin millions?\b", reference_text, re.IGNORECASE):
-                cleaned = f"{cleaned} million"
-            elif re.search(r"\bin billions?\b", reference_text, re.IGNORECASE):
-                cleaned = f"{cleaned} billion"
+            unit_suffix = self._infer_reference_unit_suffix(reference_text)
+            if unit_suffix:
+                cleaned = f"{cleaned}{unit_suffix}"
         return cleaned.replace("$ ", "$")
 
     def _parse_numeric_literal(self, literal: str) -> Optional[float]:
@@ -2440,9 +3100,18 @@ class ResearchController:
             body = f"{abs(int(round(rounded))):,}"
         else:
             body = f"{abs(rounded):,.2f}".rstrip("0").rstrip(".")
-        suffix = " million" if re.search(r"\bin millions?\b", reference_text, re.IGNORECASE) else ""
+        suffix = self._infer_reference_unit_suffix(reference_text)
         prefix = "-$" if rounded < 0 else "$"
         return f"{prefix}{body}{suffix}"
+
+    def _infer_reference_unit_suffix(self, reference_text: str) -> str:
+        if re.search(r"\b(?:in\s+)?(?:usd\s+)?millions?\b", reference_text, re.IGNORECASE):
+            return " million"
+        if re.search(r"\b(?:in\s+)?(?:usd\s+)?billions?\b", reference_text, re.IGNORECASE):
+            return " billion"
+        if re.search(r"\b(?:in\s+)?(?:usd\s+)?thousands?\b", reference_text, re.IGNORECASE):
+            return " thousand"
+        return ""
 
     def _claim_is_too_broad(self, statement: str) -> bool:
         cleaned = (statement or "").strip()
@@ -2477,9 +3146,11 @@ class ResearchController:
             return False
         if subquestion.lane != ResearchLane.HARD_FACT:
             return not self._claim_requires_primary_support(cleaned)
-        if self._extract_number_tokens(cleaned):
-            return True
         lowered = cleaned.lower()
+        alignment = max(
+            self._slot_overlap_ratio(subquestion, cleaned),
+            self._question_overlap_ratio(subquestion, cleaned),
+        )
         if any(
             token in lowered
             for token in (
@@ -2497,8 +3168,10 @@ class ResearchController:
                 "declining",
             )
         ):
-            return True
-        return self._slot_overlap_ratio(subquestion, cleaned) >= 0.34
+            return alignment >= 0.12
+        if self._extract_number_tokens(cleaned):
+            return alignment >= 0.18
+        return alignment >= 0.34
 
     def _derive_atomic_claim_from_chunk(
         self,
@@ -2551,6 +3224,7 @@ class ResearchController:
             score = 0.0
             lowered = candidate.lower()
             score += self._slot_overlap_ratio(subquestion, candidate) * 10.0
+            score += self._question_overlap_ratio(subquestion, candidate) * 12.0
             if subquestion.metric_family and subquestion.metric_family in lowered:
                 score += 3.0
             if subquestion.lane == ResearchLane.HARD_FACT and self._extract_number_tokens(candidate):
@@ -2888,6 +3562,9 @@ class ResearchController:
     ) -> str:
         if not completed:
             return "Insufficient evidence in the source pack to produce a confident research summary."
+        direct_answer = self._build_task_level_direct_answer(task, completed)
+        if direct_answer:
+            return direct_answer
         ranked_lines = self._rank_summary_lines(task, completed)
         if ranked_lines:
             return "\n".join(ranked_lines[:3])
@@ -2896,6 +3573,247 @@ class ResearchController:
         if summary:
             return summary
         return "Insufficient evidence in the source pack to produce a confident research summary."
+
+    def _build_task_level_direct_answer(
+        self,
+        task: ResearchTask,
+        completed: List[ResearchQuestionResult],
+    ) -> str:
+        operand_details = [
+            detail
+            for item in completed
+            for detail in [self._extract_operand_detail_from_result(item)]
+            if detail is not None
+        ]
+        if not operand_details:
+            return ""
+
+        query_lower = task.query.lower()
+        if "working capital ratio" in query_lower or "current ratio" in query_lower:
+            return self._synthesize_current_ratio_answer(operand_details)
+        if "fixed asset turnover ratio" in query_lower:
+            return self._synthesize_average_balance_ratio_answer(
+                operand_details,
+                numerator_role="revenue",
+                balance_role="ppne",
+                ratio_name="fixed asset turnover ratio",
+                numerator_label="revenue",
+                balance_label="PP&E",
+            )
+        if "asset turnover ratio" in query_lower and "fixed asset turnover ratio" not in query_lower:
+            return self._synthesize_average_balance_ratio_answer(
+                operand_details,
+                numerator_role="revenue",
+                balance_role="total_assets",
+                ratio_name="asset turnover ratio",
+                numerator_label="revenue",
+                balance_label="total assets",
+            )
+        if "return on assets" in query_lower or "(roa)" in query_lower or re.search(r"\broa\b", query_lower):
+            return self._synthesize_average_balance_ratio_answer(
+                operand_details,
+                numerator_role="net_income",
+                balance_role="total_assets",
+                ratio_name="return on assets",
+                numerator_label="net income",
+                balance_label="total assets",
+            )
+        if "average net profit margin" in query_lower:
+            return self._synthesize_average_net_profit_margin_answer(operand_details)
+        return ""
+
+    def _extract_operand_detail_from_result(
+        self,
+        result: ResearchQuestionResult,
+    ) -> Optional[Dict[str, object]]:
+        basis = self._subquestion_text_basis(result.subquestion)
+        year_tokens = self._extract_year_numbers(result.subquestion.text)
+        year = year_tokens[-1] if year_tokens else None
+        content_candidates = [result.supported_content, result.answer_text] + [chunk.text for chunk in result.evidence[:8]]
+        operand_specs = [
+            {
+                "role": "revenue",
+                "keywords": ("revenue", "net sales", "sales"),
+                "labels": ["total revenue", "net revenue", "net sales", "revenue", "sales"],
+            },
+            {
+                "role": "ppne",
+                "keywords": ("pp&e", "property, plant", "property and equipment", "ppne"),
+                "labels": [
+                    "property, plant and equipment, net",
+                    "property and equipment, net",
+                    "net property, plant and equipment",
+                    "property, plant and equipment",
+                ],
+            },
+            {
+                "role": "total_assets",
+                "keywords": ("total assets",),
+                "labels": ["total assets"],
+            },
+            {
+                "role": "current_assets",
+                "keywords": ("total current assets",),
+                "labels": ["total current assets"],
+            },
+            {
+                "role": "current_liabilities",
+                "keywords": ("total current liabilities",),
+                "labels": ["total current liabilities"],
+            },
+            {
+                "role": "net_income",
+                "keywords": ("net income",),
+                "labels": ["net income"],
+            },
+        ]
+        for spec in operand_specs:
+            if not any(keyword in basis for keyword in spec["keywords"]):
+                continue
+            for text in content_candidates:
+                value = self._extract_labeled_financial_value(text or "", spec["labels"])
+                if value is None:
+                    continue
+                return {
+                    "role": spec["role"],
+                    "year": year,
+                    "value": value[0],
+                    "formatted_value": value[1],
+                    "citation_pairs": self._citation_pairs_for_result(result),
+                }
+        return None
+
+    def _citation_pairs_for_result(self, result: ResearchQuestionResult) -> List[tuple[str, str]]:
+        pairs: List[tuple[str, str]] = []
+        seen = set()
+        for verification in result.verified_claims:
+            chunk_ids = verification.supporting_chunk_ids or []
+            source_ids = verification.supporting_source_ids or []
+            if len(source_ids) == 1 and len(chunk_ids) > 1:
+                source_ids = source_ids * len(chunk_ids)
+            for chunk_id, source_id in zip(chunk_ids, source_ids):
+                pair = (chunk_id, source_id)
+                if not chunk_id or not source_id or pair in seen:
+                    continue
+                pairs.append(pair)
+                seen.add(pair)
+        if pairs:
+            return pairs
+        return [
+            (chunk.chunk_id, chunk.source_id)
+            for chunk in result.evidence[:1]
+            if chunk.chunk_id and chunk.source_id
+        ]
+
+    def _extract_year_numbers(self, text: str) -> List[int]:
+        years = []
+        seen = set()
+        for match in re.finditer(r"(?:fy|fiscal year|year end fy|end of fy|as of fy)?\s*(20\d{2})", text or "", re.IGNORECASE):
+            year = int(match.group(1))
+            if year in seen:
+                continue
+            years.append(year)
+            seen.add(year)
+        return years
+
+    def _combine_citation_pairs(self, details: Sequence[Dict[str, object]]) -> str:
+        pairs: List[tuple[str, str]] = []
+        seen = set()
+        for detail in details:
+            for pair in detail.get("citation_pairs", []) or []:
+                if pair in seen:
+                    continue
+                pairs.append(pair)
+                seen.add(pair)
+        return self._format_citation_pairs(pairs)
+
+    def _synthesize_current_ratio_answer(self, operand_details: Sequence[Dict[str, object]]) -> str:
+        current_assets = [detail for detail in operand_details if detail["role"] == "current_assets"]
+        current_liabilities = [detail for detail in operand_details if detail["role"] == "current_liabilities"]
+        if not current_assets or not current_liabilities:
+            return ""
+        assets_detail = max(current_assets, key=lambda detail: detail.get("year") or 0)
+        liabilities_detail = max(current_liabilities, key=lambda detail: detail.get("year") or 0)
+        denominator = float(liabilities_detail["value"])
+        if denominator == 0:
+            return ""
+        ratio = float(assets_detail["value"]) / denominator
+        citations = self._combine_citation_pairs([assets_detail, liabilities_detail])
+        return (
+            f"- The working capital ratio was {self._format_ratio_value(ratio)}, based on total current assets of "
+            f"{assets_detail['formatted_value']} and total current liabilities of {liabilities_detail['formatted_value']}."
+            f"{citations}"
+        )
+
+    def _synthesize_average_balance_ratio_answer(
+        self,
+        operand_details: Sequence[Dict[str, object]],
+        *,
+        numerator_role: str,
+        balance_role: str,
+        ratio_name: str,
+        numerator_label: str,
+        balance_label: str,
+    ) -> str:
+        numerators = [detail for detail in operand_details if detail["role"] == numerator_role and detail.get("year") is not None]
+        balances = [detail for detail in operand_details if detail["role"] == balance_role and detail.get("year") is not None]
+        if not numerators or len(balances) < 2:
+            return ""
+        current_year = max(int(detail["year"]) for detail in numerators)
+        numerator = next((detail for detail in numerators if int(detail["year"]) == current_year), None)
+        current_balance = next((detail for detail in balances if int(detail["year"]) == current_year), None)
+        previous_year = current_year - 1
+        previous_balance = next((detail for detail in balances if int(detail["year"]) == previous_year), None)
+        if numerator is None or current_balance is None or previous_balance is None:
+            return ""
+        average_balance = (float(current_balance["value"]) + float(previous_balance["value"])) / 2.0
+        if average_balance == 0:
+            return ""
+        ratio_value = float(numerator["value"]) / average_balance
+        average_balance_formatted = self._format_financial_value(
+            average_balance,
+            " ".join([str(current_balance["formatted_value"]), str(previous_balance["formatted_value"])]),
+        )
+        citations = self._combine_citation_pairs([numerator, previous_balance, current_balance])
+        return (
+            f"- The {ratio_name} was {self._format_ratio_value(ratio_value)}, based on FY{current_year} {numerator_label} of "
+            f"{numerator['formatted_value']} and average {balance_label} of {average_balance_formatted} "
+            f"({previous_balance['formatted_value']} in FY{previous_year} and {current_balance['formatted_value']} in FY{current_year})."
+            f"{citations}"
+        )
+
+    def _synthesize_average_net_profit_margin_answer(
+        self,
+        operand_details: Sequence[Dict[str, object]],
+    ) -> str:
+        revenues = {
+            int(detail["year"]): detail
+            for detail in operand_details
+            if detail["role"] == "revenue" and detail.get("year") is not None
+        }
+        net_income = {
+            int(detail["year"]): detail
+            for detail in operand_details
+            if detail["role"] == "net_income" and detail.get("year") is not None
+        }
+        common_years = sorted(set(revenues) & set(net_income))
+        if len(common_years) < 2:
+            return ""
+        margins = []
+        used_details: List[Dict[str, object]] = []
+        for year in common_years:
+            revenue_value = float(revenues[year]["value"])
+            if revenue_value == 0:
+                return ""
+            margins.append(float(net_income[year]["value"]) / revenue_value)
+            used_details.extend([revenues[year], net_income[year]])
+        average_margin = sum(margins) / len(margins)
+        citations = self._combine_citation_pairs(used_details)
+        year_span = f"FY{common_years[0]}–FY{common_years[-1]}"
+        return (
+            f"- The average net profit margin for {year_span} was {average_margin * 100:.1f}%."
+            f"{citations}"
+        )
 
     def _rank_summary_lines(
         self,
@@ -3124,6 +4042,8 @@ class ResearchController:
     def _enforce_lane(self, text: str, proposed_lane: Optional[str]) -> ResearchLane:
         lowered = text.lower()
         proposed = str(proposed_lane or "").strip().lower()
+        if self._looks_like_catalog_request(lowered) and not self._looks_like_numeric_fact_request(lowered):
+            return ResearchLane.SEMANTIC
         if any(
             phrase in lowered
             for phrase in ("make money", "business model", "monetization", "revenue sources", "core business")
@@ -3138,6 +4058,37 @@ class ResearchController:
         if self._contains_any(lowered, SEMANTIC_KEYWORDS):
             return ResearchLane.SEMANTIC
         return ResearchLane.HARD_FACT
+
+    def _looks_like_catalog_request(self, lowered: str) -> bool:
+        has_catalog_terms = any(
+            token in lowered
+            for token in (
+                "product",
+                "products",
+                "service",
+                "services",
+                "offering",
+                "offerings",
+                "platform",
+                "platforms",
+                "sell",
+                "sells",
+            )
+        )
+        asks_listing = any(
+            token in lowered
+            for token in (
+                "what are",
+                "what were",
+                "what does",
+                "what do",
+                "major",
+                "main",
+                "core",
+                "primary",
+            )
+        )
+        return has_catalog_terms and asks_listing
 
     def _looks_like_numeric_fact_request(self, lowered: str) -> bool:
         numeric_phrases = (

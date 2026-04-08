@@ -216,6 +216,7 @@ class ConfidenceLevel(Enum):
     MODERATE = "moderate"
     WEAK = "weak"
     UNSUPPORTED = "unsupported"
+    CONTRADICTED = "contradicted"
 
 
 @dataclass
@@ -228,6 +229,18 @@ class Claim:
     contains_numbers: bool = False
     extracted_numbers: List[str] = field(default_factory=list)
     specificity_score: float = 0.0
+    claim_type: str = "descriptive"    # numeric | descriptive | comparative | causal | management_commentary
+    risk_level: str = "medium"         # high | medium | low
+    subject: Optional[str] = None
+    metric: Optional[str] = None
+    value: Optional[str] = None
+    unit: Optional[str] = None
+    period: Optional[str] = None
+    comparison_basis: Optional[str] = None
+    directionality: Optional[str] = None
+    is_inference: bool = False
+    requires_primary_source: bool = False
+    atomicity: bool = True
 
 
 @dataclass
@@ -239,9 +252,17 @@ class VerificationResult:
     supporting_evidence: List[str]     # 支撑的原文片段
     explanation: str
     failure_reason: Optional[str] = None
+    failure_stage: Optional[str] = None  # structure | evidence | rules | semantics | reviewer
     supporting_source_ids: List[str] = field(default_factory=list)
     supporting_chunk_ids: List[str] = field(default_factory=list)
     primary_source_supported: Optional[bool] = None
+    period_verified: Optional[bool] = None
+    currency_verified: Optional[bool] = None
+    unit_verified: Optional[bool] = None
+    directionality_verified: Optional[bool] = None
+    contradiction_detected: Optional[bool] = None
+    verdict_trace: Dict[str, Any] = field(default_factory=dict)
+    review_notes: List[str] = field(default_factory=list)
 
 
 # ========== Memo ==========

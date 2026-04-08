@@ -31,6 +31,10 @@ class Settings(BaseSettings):
         default=2,
         validation_alias=AliasChoices("LLM_REQUEST_MAX_RETRIES", "OPENAI_MAX_RETRIES"),
     )
+    llm_judge_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("LLM_JUDGE_ENABLED"),
+    )
     benchmark_question_max_retries: int = Field(
         default=2,
         validation_alias=AliasChoices("BENCHMARK_QUESTION_MAX_RETRIES", "BENCHMARK_ITEM_MAX_RETRIES"),

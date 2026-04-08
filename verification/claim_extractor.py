@@ -10,7 +10,7 @@
 """
 
 import re
-from typing import List
+from typing import List, Optional
 import hashlib
 
 from agent.schemas import Claim
@@ -47,9 +47,26 @@ class ClaimExtractor:
     # 在这个 MVP 中，我们通过检测句子里除第一个词外是否有首字母大写的单词来粗略近似专有名词
     PROPER_NOUN_PATTERN = re.compile(r'\b[A-Z][a-z]+\b')
 
-    def extract_claims(self, text: str, section_name: str) -> List[Claim]:
+    FOCUS_STOPWORDS = {
+        "the", "and", "for", "with", "that", "this", "what", "which", "when", "where",
+        "from", "into", "answer", "question", "please", "using", "based", "provided",
+        "primarily", "following", "according", "reported", "report", "fiscal", "year",
+        "years", "within", "shown", "statement", "balance", "sheet", "income", "cash",
+        "flow", "financial", "metric", "metrics", "company",
+    }
+
+    def extract_claims(
+        self,
+        text: str,
+        section_name: str,
+        *,
+        focus_text: Optional[str] = None,
+        max_claims: Optional[int] = None,
+    ) -> List[Claim]:
         sentences = self._split_sentences(text)
         claims = []
+        scored_claims = []
+        focus_tokens = self._focus_tokens(focus_text)
 
         for sent in sentences:
             sent = sent.lstrip("-• ").strip()
@@ -97,7 +114,7 @@ class ClaimExtractor:
 
             claim_id = hashlib.md5(clean_text.encode()).hexdigest()[:10]
 
-            claims.append(Claim(
+            claim = Claim(
                 claim_id=claim_id,
                 text=clean_text,
                 section=section_name,
@@ -106,8 +123,23 @@ class ClaimExtractor:
                 contains_numbers=len(numbers) > 0,
                 extracted_numbers=numbers,
                 specificity_score=round(score, 2)
-            ))
+            )
+            claims.append(claim)
+            scored_claims.append(
+                (
+                    self._focus_overlap_score(clean_text, focus_tokens),
+                    claim.contains_numbers,
+                    claim.specificity_score,
+                    len(scored_claims),
+                    claim,
+                )
+            )
 
+        if focus_tokens:
+            scored_claims.sort(key=lambda item: (-item[0], -float(item[1]), -item[2], item[3]))
+            claims = [claim for _, _, _, _, claim in scored_claims]
+        if max_claims is not None:
+            claims = claims[:max_claims]
         return claims
 
     def _split_sentences(self, text: str) -> List[str]:
@@ -161,3 +193,24 @@ class ClaimExtractor:
             "does not mention", "cannot be determined", "unable to verify", "cannot support an executive summary"
         ]
         return any(p in lower for p in insufficient_phrases)
+
+    def _focus_tokens(self, text: Optional[str]) -> set[str]:
+        normalized = re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
+        if not normalized:
+            return set()
+        return {
+            token
+            for token in normalized.split()
+            if len(token) > 2 and token not in self.FOCUS_STOPWORDS
+        }
+
+    def _focus_overlap_score(self, text: str, focus_tokens: set[str]) -> float:
+        if not focus_tokens:
+            return 0.0
+        hay_tokens = self._focus_tokens(text)
+        if not hay_tokens:
+            return 0.0
+        overlap = len(hay_tokens & focus_tokens)
+        if overlap == 0:
+            return 0.0
+        return overlap / len(focus_tokens)

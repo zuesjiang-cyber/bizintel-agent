@@ -12,13 +12,14 @@ import re
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from agent.artifacts import write_artifact_bundle
 from agent.config import settings
 from agent.orchestrator import BizIntelAgent
 from eval.evaluator import extract_scorable_markdown, score_markdown, score_research_trace
 from eval.financebench_mapping import score_gold_answer_mapping
+from eval.llm_judge import LLMJudge
 from verification.claim_extractor import ClaimExtractor
 from verification.evidence_verifier import EvidenceVerifier
 from retrieval.hybrid_retriever import HybridRetriever
@@ -38,12 +39,209 @@ except ImportError:  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
+PRIMARY_METRICS = [
+    "contradiction_rate",
+    "fabricated_citation_rate",
+    "unsupported_claim_rate",
+    "unsafe_publish_rate",
+    "numeric_exact_match_rate",
+    "unsupported_numeric_claim_rate",
+    "primary_source_support_rate",
+    "primary_source_missing_rate",
+    "strong_support_rate",
+    "weak_support_rate",
+    "abstention_precision",
+    "abstention_recall",
+]
+SECONDARY_METRICS = [
+    "atomic_claim_rate",
+    "claim_extract_success_rate",
+    "period_match_rate",
+    "currency_match_rate",
+    "directionality_match_rate",
+    "required_slot_coverage",
+    "required_fact_recall",
+    "retrieval_hit",
+    "gold_answer_hit",
+    "gold_numeric_hit",
+    "answer_quality",
+]
+
+
+def format_metric(value: Any, decimals: int = 4, default: str = "n/a") -> str:
+    if value is None:
+        return default
+    try:
+        return f"{float(value):.{decimals}f}"
+    except (TypeError, ValueError):
+        return default
+
+
+def contains_query_phrase(query: str, phrase: str) -> bool:
+    pattern = r"\b" + r"\s+".join(re.escape(part) for part in phrase.split()) + r"\b"
+    return re.search(pattern, query) is not None
+
+
+def contains_any_query_phrase(query: str, phrases: List[str]) -> bool:
+    return any(contains_query_phrase(query, phrase) for phrase in phrases)
+
+
+def classify_question_family(query: str, query_types: List[str]) -> str:
+    lowered = query.lower()
+    if contains_any_query_phrase(lowered, ["customer concentration", "concentration", "major customer"]):
+        return "customer_concentration"
+    if contains_query_phrase(lowered, "ratio"):
+        return "ratio"
+    if contains_any_query_phrase(lowered, ["year-over-year", "quarter-over-quarter", "yoy", "qoq"]):
+        return "yoy_qoq"
+    if contains_any_query_phrase(lowered, ["highest", "lowest", "largest", "smallest", "most", "least"]):
+        if contains_query_phrase(lowered, "segment"):
+            return "segment_ranking"
+        return "max_min"
+    if contains_any_query_phrase(lowered, ["what drove", "why did", "reason", "drivers"]):
+        return "reason_attribution"
+    if contains_any_query_phrase(lowered, ["from fy", "from q", "between", "vs", "versus", "compared"]):
+        return "two_period_comparison"
+    if contains_any_query_phrase(lowered, ["what is", "what was", "how much", "amount", "did", "reported"]):
+        return "single_value"
+    if "numeric_grounding" in query_types:
+        return "single_value"
+    return "general"
+
+
+def derive_answer_status_decision(
+    metrics: dict,
+    scorable_markdown: str,
+    *,
+    question_text: str = "",
+    judge: Optional[LLMJudge] = None,
+) -> dict:
+    lowered = scorable_markdown.lower()
+    if metrics.get("total_claims", 0) == 0:
+        rule_status = "abstained"
+        rule_reason = "No verifiable claims were produced."
+    elif "insufficient evidence" in lowered and metrics.get("strong_support_rate", 0.0) == 0.0 and metrics.get("required_slot_coverage", 0.0) < 0.5:
+        rule_status = "abstained"
+        rule_reason = "The answer text is mostly an insufficiency statement."
+    elif (
+        metrics.get("strong_support_rate", 0.0) > 0.0
+        and metrics.get("fabricated_citation_rate", 0.0) == 0.0
+        and metrics.get("contradiction_rate", 0.0) == 0.0
+        and metrics.get("required_slot_coverage", 0.0) >= 0.75
+    ):
+        rule_status = "answered"
+        rule_reason = "The answer contains supported claims and covers the required slots."
+    else:
+        rule_status = "partial"
+        rule_reason = "The answer contains some usable content but still has important gaps."
+
+    judge = judge or LLMJudge()
+    decision = judge.adjudicate_answer_status(
+        question_text=question_text,
+        scorable_markdown=scorable_markdown,
+        metrics=metrics,
+        rule_status=rule_status,
+    )
+    if decision:
+        return {
+            "status": decision["answer_status"],
+            "reason": decision.get("reason") or rule_reason,
+            "rule_status": rule_status,
+            "rule_reason": rule_reason,
+            "llm_reviewed": True,
+            "llm_adjudicated": decision["answer_status"] != rule_status,
+        }
+    return {
+        "status": rule_status,
+        "reason": rule_reason,
+        "rule_status": rule_status,
+        "rule_reason": rule_reason,
+        "llm_reviewed": False,
+        "llm_adjudicated": False,
+    }
+
+
+def derive_answer_status(metrics: dict, scorable_markdown: str) -> str:
+    return derive_answer_status_decision(metrics, scorable_markdown)["status"]
+
+
+def should_abstain(metrics: dict, research_metrics: dict) -> bool:
+    return (
+        metrics.get("strong_support_rate", 0.0) == 0.0
+        and metrics.get("numeric_exact_match_rate", 0.0) == 0.0
+        and metrics.get("primary_source_support_rate", 0.0) == 0.0
+        and metrics.get("required_fact_recall", 0.0) == 0.0
+        and research_metrics.get("hard_fact_completion_rate", 0.0) == 0.0
+    )
+
+
+def summarize_retrieval_candidates(result: dict, limit_per_question: int = 3) -> List[dict]:
+    candidates: List[dict] = []
+    for subquestion_result in result.get("subquestion_results", []):
+        subquestion = getattr(subquestion_result, "subquestion", None)
+        question_id = getattr(subquestion, "question_id", "")
+        question_text = getattr(subquestion, "text", "")
+        for chunk in list(getattr(subquestion_result, "evidence", []))[:limit_per_question]:
+            candidates.append(
+                {
+                    "question_id": question_id,
+                    "question_text": question_text,
+                    "chunk_id": getattr(chunk, "chunk_id", ""),
+                    "source_id": getattr(chunk, "source_id", ""),
+                    "source_type": getattr(chunk, "source_type", None),
+                    "score": getattr(chunk, "score", None),
+                    "period": getattr(chunk, "period", None),
+                }
+            )
+    return candidates
+
+
+def summarize_final_cited_evidence(claim_diagnostics: List[dict]) -> List[dict]:
+    rows: List[dict] = []
+    seen = set()
+    for claim in claim_diagnostics:
+        support_texts = claim.get("supporting_evidence") or []
+        chunk_ids = claim.get("supporting_chunk_ids") or []
+        source_ids = claim.get("supporting_source_ids") or []
+        max_len = max(len(chunk_ids), len(source_ids), len(support_texts), 1)
+        for idx in range(max_len):
+            chunk_id = chunk_ids[idx] if idx < len(chunk_ids) else ""
+            source_id = source_ids[idx] if idx < len(source_ids) else ""
+            evidence_text = support_texts[idx] if idx < len(support_texts) else (support_texts[0] if support_texts else "")
+            key = (chunk_id, source_id, evidence_text)
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(
+                {
+                    "claim_text": claim.get("claim_text", ""),
+                    "support_label": claim.get("support_label", "unsupported"),
+                    "chunk_id": chunk_id,
+                    "source_id": source_id,
+                    "evidence_text": evidence_text,
+                    "source_tier": claim.get("source_tier"),
+                }
+            )
+    return rows
+
+
+def summarize_question_errors(metrics: dict, research_metrics: dict) -> dict:
+    claim_error_counts = dict(metrics.get("claim_error_counts", {}))
+    controller_failures = list(research_metrics.get("controller_failure_reasons", []))
+    return {
+        "claim_error_counts": claim_error_counts,
+        "claim_error_rates": dict(metrics.get("claim_error_rates", {})),
+        "controller_failure_reasons": controller_failures,
+        "most_severe_failure_type": metrics.get("most_severe_failure_type") or (controller_failures[0] if controller_failures else None),
+    }
+
 
 def benchmark_artifact_root(output_path: Path) -> Path:
     return output_path.with_name(f"{output_path.stem}_artifacts")
 
 
 def render_benchmark_case_report(item: dict, row: dict, result: dict) -> str:
+    question_errors = row.get("question_error_summary", {})
     lines = [
         f"# Benchmark Case {row['item_id']}",
         "",
@@ -51,25 +249,43 @@ def render_benchmark_case_report(item: dict, row: dict, result: dict) -> str:
         f"- Category: {item.get('category', 'unknown')}",
         f"- Difficulty: {item.get('difficulty', 'unknown')}",
         f"- Query types: {', '.join(item.get('query_type', [])) or 'n/a'}",
+        f"- Question family: {row.get('question_family', 'general')}",
+        f"- Answer status: {row.get('answer_status', 'unknown')}",
         f"- Companies: {', '.join(row.get('item_companies', [])) or 'n/a'}",
         f"- Sources used: {', '.join(row.get('sources_used', [])) or 'n/a'}",
         f"- Failure tags: {', '.join(row.get('failure_tags', [])) or 'none'}",
         "",
-        "## Metrics",
+        "## Trust Metrics",
+        "",
+        f"- strong_support_rate: {row.get('strong_support_rate', 0.0):.4f}",
+        f"- weak_support_rate: {row.get('weak_support_rate', 0.0):.4f}",
+        f"- contradiction_rate: {row.get('contradiction_rate', 0.0):.4f}",
+        f"- fabricated_citation_rate: {row.get('fabricated_citation_rate', 0.0):.4f}",
+        f"- unsupported_claim_rate: {row.get('unsupported_claim_rate', 0.0):.4f}",
+        f"- numeric_exact_match_rate: {row.get('numeric_exact_match_rate', 0.0):.4f}",
+        f"- primary_source_support_rate: {row.get('primary_source_support_rate', 0.0):.4f}",
+        f"- abstention_precision: {format_metric(row.get('abstention_precision'))}",
+        f"- abstention_recall: {format_metric(row.get('abstention_recall'))}",
+        "",
+        "## Completeness Metrics",
         "",
         f"- retrieval_hit: {row.get('retrieval_hit', 0.0)}",
-        f"- wrong_entity_rate: {row.get('wrong_entity_rate', 0.0)}",
-        f"- wrong_period_rate: {row.get('wrong_period_rate', 0.0)}",
-        f"- verified_claim_coverage: {row.get('verified_claim_coverage', 0.0):.4f}",
-        f"- unsupported_claim_rate: {row.get('unsupported_claim_rate', 0.0):.4f}",
         f"- required_subquestion_coverage: {row.get('required_subquestion_coverage', 0.0):.4f}",
         f"- required_slot_coverage: {row.get('required_slot_coverage', 0.0):.4f}",
-        f"- decision_replay_consistency: {row.get('decision_replay_consistency', 0.0):.4f}",
+        f"- required_fact_recall: {row.get('required_fact_recall', 0.0):.4f}",
         f"- gold_answer_hit: {row.get('gold_answer_hit', 0.0):.4f}",
         f"- gold_numeric_hit: {row.get('gold_numeric_hit', 0.0):.4f}",
-        f"- gold_citation_hit: {row.get('gold_citation_hit', 0.0):.4f}",
-        f"- gold_semantic_similarity: {row.get('gold_semantic_similarity', 0.0):.4f}",
-        f"- gold_semantic_hit: {row.get('gold_semantic_hit', 0.0):.4f}",
+        "",
+        "## Safety Diagnostics",
+        "",
+        f"- wrong_entity_rate: {row.get('wrong_entity_rate', 0.0)}",
+        f"- wrong_period_rate: {row.get('wrong_period_rate', 0.0)}",
+        f"- decision_replay_consistency: {row.get('decision_replay_consistency', 0.0):.4f}",
+        f"- most_severe_failure_type: {question_errors.get('most_severe_failure_type') or 'none'}",
+        "",
+        "## Claim Errors",
+        "",
+        json.dumps(question_errors.get("claim_error_counts", {}), ensure_ascii=False, indent=2),
         "",
         "## Natural Text Memo",
         "",
@@ -81,6 +297,9 @@ def render_benchmark_case_report(item: dict, row: dict, result: dict) -> str:
 
 def render_benchmark_report(payload: dict) -> str:
     averages = payload.get("averages", {})
+    run_summary = payload.get("run_summary", {})
+    portfolio_summary = payload.get("portfolio_summary", {})
+    delta = payload.get("delta_from_baseline", {})
     lines = [
         f"# Benchmark Report: {payload.get('profile') or payload.get('split')}",
         "",
@@ -88,22 +307,47 @@ def render_benchmark_report(payload: dict) -> str:
         f"- Mode: {payload.get('mode')}",
         f"- Timestamp: {payload.get('timestamp')}",
         f"- Companies: {', '.join(payload.get('companies', [])) or 'n/a'}",
+        f"- Baseline: {payload.get('baseline_path') or 'n/a'}",
         "",
-        "## Portfolio Metrics",
+        "## Run Summary",
+        "",
+        f"- total_items: {run_summary.get('total_items', len(payload.get('rows', [])))}",
+        f"- answered_items: {run_summary.get('answered_items', 0)}",
+        f"- partial_items: {run_summary.get('partial_items', 0)}",
+        f"- abstained_items: {run_summary.get('abstained_items', 0)}",
+        f"- question_type_counts: {json.dumps(portfolio_summary.get('question_type_counts', {}), ensure_ascii=False)}",
+        "",
+        "## Primary Metrics",
+        "",
+        f"- contradiction_rate: {averages.get('contradiction_rate', 0.0):.4f}",
+        f"- fabricated_citation_rate: {averages.get('fabricated_citation_rate', 0.0):.4f}",
+        f"- unsupported_claim_rate: {averages.get('unsupported_claim_rate', 0.0):.4f}",
+        f"- numeric_exact_match_rate: {averages.get('numeric_exact_match_rate', 0.0):.4f}",
+        f"- primary_source_support_rate: {averages.get('primary_source_support_rate', 0.0):.4f}",
+        f"- strong_support_rate: {averages.get('strong_support_rate', 0.0):.4f}",
+        f"- weak_support_rate: {averages.get('weak_support_rate', 0.0):.4f}",
+        f"- abstention_precision: {averages.get('abstention_precision', 0.0):.4f}",
+        f"- abstention_recall: {averages.get('abstention_recall', 0.0):.4f}",
+        "",
+        "## Secondary Metrics",
         "",
         f"- retrieval_hit: {averages.get('retrieval_hit', 0.0):.4f}",
         f"- wrong_entity_rate: {averages.get('wrong_entity_rate', 0.0):.4f}",
         f"- wrong_period_rate: {averages.get('wrong_period_rate', 0.0):.4f}",
-        f"- verified_claim_coverage: {averages.get('verified_claim_coverage', 0.0):.4f}",
-        f"- unsupported_claim_rate: {averages.get('unsupported_claim_rate', 0.0):.4f}",
         f"- required_subquestion_coverage: {averages.get('required_subquestion_coverage', 0.0):.4f}",
         f"- required_slot_coverage: {averages.get('required_slot_coverage', 0.0):.4f}",
+        f"- required_fact_recall: {averages.get('required_fact_recall', 0.0):.4f}",
         f"- decision_replay_consistency: {averages.get('decision_replay_consistency', 0.0):.4f}",
         f"- gold_answer_hit: {averages.get('gold_answer_hit', 0.0):.4f}",
         f"- gold_numeric_hit: {averages.get('gold_numeric_hit', 0.0):.4f}",
-        f"- gold_citation_hit: {averages.get('gold_citation_hit', 0.0):.4f}",
-        f"- gold_semantic_similarity: {averages.get('gold_semantic_similarity', 0.0):.4f}",
-        f"- gold_semantic_hit: {averages.get('gold_semantic_hit', 0.0):.4f}",
+        "",
+        "## Delta Vs Baseline",
+        "",
+        json.dumps({key: round(value, 6) for key, value in delta.items()}, ensure_ascii=False, indent=2),
+        "",
+        "## Failure Distribution",
+        "",
+        json.dumps(run_summary.get("failure_type_distribution", {}), ensure_ascii=False, indent=2),
         "",
         "## Cases",
         "",
@@ -260,17 +504,30 @@ def verified_claim_coverage(metrics: dict) -> float:
 
 
 def answer_quality(item: dict, metrics: dict, matched_count: int) -> int:
+    strong_support_rate = float(metrics.get("strong_support_rate", metrics.get("verified_claim_coverage", 0.0)))
+    contradiction_rate = float(metrics.get("contradiction_rate", 0.0))
+    fabricated_citation_rate = float(metrics.get("fabricated_citation_rate", 0.0))
+    numeric_exact_match_rate = float(
+        metrics.get(
+            "numeric_exact_match_rate",
+            1.0 if strong_support_rate >= 0.75 and float(metrics.get("unsupported_claim_rate", 1.0)) <= 0.2 else 0.0,
+        )
+    )
     score = 1
-    if verified_claim_coverage(metrics) >= 0.55:
+    if strong_support_rate >= 0.55:
         score += 1
-    if metrics["unsupported_claim_rate"] <= 0.35:
+    if contradiction_rate == 0.0 and fabricated_citation_rate == 0.0:
+        score += 1
+    if numeric_exact_match_rate >= 0.75:
         score += 1
     if metrics["required_fact_recall"] >= 0.5:
         score += 1
     if matched_count >= item["required_evidence"]["min_distinct_sources"]:
         score += 1
-    if verified_claim_coverage(metrics) >= 0.75 and metrics["unsupported_claim_rate"] <= 0.2:
+    if strong_support_rate >= 0.75 and metrics["unsupported_claim_rate"] <= 0.2:
         score = min(score + 1, 5)
+    if contradiction_rate > 0.0 or fabricated_citation_rate > 0.0:
+        score = min(score, 2)
     if metrics.get("required_subquestion_coverage", 1.0) < 0.5:
         score = min(score, 3)
     if metrics.get("required_slot_coverage", 1.0) < 0.5:
@@ -282,7 +539,7 @@ def answer_quality(item: dict, metrics: dict, matched_count: int) -> int:
     if (
         metrics.get("gold_answer_mode", "unmapped") == "semantic_gold_answer"
         and metrics.get("gold_semantic_hit", 1.0) < 1.0
-        and verified_claim_coverage(metrics) < 0.6
+        and strong_support_rate < 0.6
     ):
         score = min(score, 4)
     return min(score, 5)
@@ -290,10 +547,14 @@ def answer_quality(item: dict, metrics: dict, matched_count: int) -> int:
 
 def failure_tags(item: dict, metrics: dict, memo_markdown: str, gold_entries: List[dict], source_ids: List[str], matched_count: int) -> List[str]:
     tags: List[str] = []
-    if verified_claim_coverage(metrics) < 0.4:
+    if metrics.get("primary_source_support_rate", 0.0) < 0.4:
         tags.append("R1_missing_primary_source")
+    if metrics.get("fabricated_citation_rate", 0.0) > 0.0:
+        tags.append("S5_fabricated_citation")
+    if metrics.get("contradiction_rate", 0.0) > 0.0:
+        tags.append("S6_contradiction")
     if metrics["unsupported_claim_rate"] > 0.4:
-        tags.append("S5_overclaim")
+        tags.append("S5_untrusted_answer")
     if metrics["required_fact_recall"] < 0.5:
         tags.append("S1_incomplete_answer")
     if item["category"] == "time_sensitive" and "Q3" not in memo_markdown and "Q4" not in memo_markdown and "Q2" not in memo_markdown:
@@ -486,10 +747,19 @@ def compute_group_averages(rows: List[dict], field: str) -> Dict[str, dict]:
     return {name: compute_averages(group_rows) for name, group_rows in sorted(grouped.items())}
 
 
+def compute_optional_metric_average(rows: List[dict], field: str) -> float:
+    values = [row.get(field) for row in rows if row.get(field) is not None]
+    if not values:
+        return 0.0
+    return sum(float(value) for value in values) / len(values)
+
+
 def build_portfolio_summary(rows: List[dict]) -> dict:
     category_counts = Counter(row.get("category", "unknown") for row in rows)
     difficulty_counts = Counter(row.get("difficulty", "unknown") for row in rows)
     query_type_counts = Counter()
+    question_family_counts = Counter(row.get("question_family", "general") for row in rows)
+    answer_status_counts = Counter(row.get("answer_status", "unknown") for row in rows)
     for row in rows:
         for query_type in row.get("query_type", []):
             query_type_counts[query_type] += 1
@@ -498,7 +768,37 @@ def build_portfolio_summary(rows: List[dict]) -> dict:
         "category_counts": dict(sorted(category_counts.items())),
         "difficulty_counts": dict(sorted(difficulty_counts.items())),
         "query_type_counts": dict(sorted(query_type_counts.items())),
+        "question_family_counts": dict(sorted(question_family_counts.items())),
+        "question_type_counts": dict(sorted(question_family_counts.items())),
+        "answer_status_counts": dict(sorted(answer_status_counts.items())),
     }
+
+
+def build_failure_type_distribution(rows: List[dict]) -> dict:
+    counts = Counter()
+    for row in rows:
+        for tag, count in row.get("question_error_summary", {}).get("claim_error_counts", {}).items():
+            counts[tag] += count
+        for reason in row.get("question_error_summary", {}).get("controller_failure_reasons", []):
+            counts[f"controller::{reason}"] += 1
+        most_severe = row.get("question_error_summary", {}).get("most_severe_failure_type")
+        if most_severe:
+            counts[f"question::{most_severe}"] += 1
+    return dict(sorted(counts.items()))
+
+
+def build_run_summary(rows: List[dict], averages: dict) -> dict:
+    status_counts = Counter(row.get("answer_status", "unknown") for row in rows)
+    summary = {
+        "total_items": len(rows),
+        "answered_items": status_counts.get("answered", 0),
+        "partial_items": status_counts.get("partial", 0),
+        "abstained_items": status_counts.get("abstained", 0),
+        "primary_metrics": {metric: averages.get(metric, 0.0) for metric in PRIMARY_METRICS},
+        "secondary_metrics": {metric: averages.get(metric, 0.0) for metric in SECONDARY_METRICS},
+        "failure_type_distribution": build_failure_type_distribution(rows),
+    }
+    return summary
 
 
 def assess_target_metrics(averages: dict, target_metrics: Dict[str, dict]) -> dict:
@@ -526,6 +826,22 @@ def assess_target_metrics(averages: dict, target_metrics: Dict[str, dict]) -> di
 def compute_averages(rows: List[dict]) -> dict:
     if not rows:
         return {
+            "strong_support_rate": 0.0,
+            "weak_support_rate": 0.0,
+            "fabricated_citation_rate": 0.0,
+            "contradiction_rate": 0.0,
+            "numeric_exact_match_rate": 0.0,
+            "primary_source_support_rate": 0.0,
+            "unsafe_publish_rate": 0.0,
+            "unsupported_numeric_claim_rate": 0.0,
+            "primary_source_missing_rate": 0.0,
+            "abstention_precision": 0.0,
+            "abstention_recall": 0.0,
+            "atomic_claim_rate": 0.0,
+            "claim_extract_success_rate": 0.0,
+            "period_match_rate": 0.0,
+            "currency_match_rate": 0.0,
+            "directionality_match_rate": 0.0,
             "retrieval_hit": 0.0,
             "citation_marker_coverage": 0.0,
             "verified_claim_coverage": 0.0,
@@ -549,7 +865,27 @@ def compute_averages(rows: List[dict]) -> dict:
             "gold_semantic_similarity": 0.0,
             "gold_semantic_hit": 0.0,
         }
+
+    abstained_rows = [row for row in rows if row.get("answer_status") == "abstained"]
+    should_abstain_rows = [row for row in rows if row.get("should_abstain") is True]
+    correct_abstentions = [row for row in abstained_rows if row.get("should_abstain") is True]
     return {
+        "strong_support_rate": sum(row.get("strong_support_rate", 0.0) for row in rows) / len(rows),
+        "weak_support_rate": sum(row.get("weak_support_rate", 0.0) for row in rows) / len(rows),
+        "fabricated_citation_rate": sum(row.get("fabricated_citation_rate", 0.0) for row in rows) / len(rows),
+        "contradiction_rate": sum(row.get("contradiction_rate", 0.0) for row in rows) / len(rows),
+        "numeric_exact_match_rate": sum(row.get("numeric_exact_match_rate", 0.0) for row in rows) / len(rows),
+        "primary_source_support_rate": sum(row.get("primary_source_support_rate", 0.0) for row in rows) / len(rows),
+        "unsafe_publish_rate": sum(row.get("unsafe_publish_rate", 0.0) for row in rows) / len(rows),
+        "unsupported_numeric_claim_rate": sum(row.get("unsupported_numeric_claim_rate", 0.0) for row in rows) / len(rows),
+        "primary_source_missing_rate": sum(row.get("primary_source_missing_rate", 0.0) for row in rows) / len(rows),
+        "abstention_precision": len(correct_abstentions) / max(1, len(abstained_rows)),
+        "abstention_recall": len(correct_abstentions) / max(1, len(should_abstain_rows)),
+        "atomic_claim_rate": sum(row.get("atomic_claim_rate", 0.0) for row in rows) / len(rows),
+        "claim_extract_success_rate": sum(row.get("claim_extract_success_rate", 0.0) for row in rows) / len(rows),
+        "period_match_rate": sum(row.get("period_match_rate", 0.0) for row in rows) / len(rows),
+        "currency_match_rate": sum(row.get("currency_match_rate", 0.0) for row in rows) / len(rows),
+        "directionality_match_rate": sum(row.get("directionality_match_rate", 0.0) for row in rows) / len(rows),
         "retrieval_hit": sum(row.get("retrieval_hit", 0.0) for row in rows) / len(rows),
         "citation_marker_coverage": sum(row.get("citation_marker_coverage", 0.0) for row in rows) / len(rows),
         "verified_claim_coverage": sum(row.get("verified_claim_coverage", 0.0) for row in rows) / len(rows),
@@ -595,7 +931,11 @@ def build_payload(
         "averages": averages,
         "rows": rows,
         "by_category": compute_group_averages(rows, "category"),
+        "by_question_family": compute_group_averages(rows, "question_family"),
+        "by_question_type": compute_group_averages(rows, "question_family"),
+        "by_answer_status": compute_group_averages(rows, "answer_status"),
         "portfolio_summary": build_portfolio_summary(rows),
+        "run_summary": build_run_summary(rows, averages),
     }
     if profile_name:
         payload["profile"] = profile_name
@@ -631,6 +971,39 @@ def load_existing_rows(output_path: Path, version: str, split: str, mode: str, p
     if payload.get("profile") != profile_name:
         raise ValueError(f"Resume output profile mismatch: expected {profile_name}, got {payload.get('profile')}")
     return {row["item_id"]: row for row in payload.get("rows", [])}
+
+
+def load_previous_payload(output_path: Path, version: str, split: str, mode: str, profile_name: str | None = None) -> Optional[dict]:
+    if not output_path.parent.exists():
+        return None
+    best_match: Optional[tuple[float, dict, Path]] = None
+    for candidate in output_path.parent.glob("*.json"):
+        if candidate == output_path or not candidate.is_file():
+            continue
+        try:
+            payload = json.loads(candidate.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if payload.get("version") != version or payload.get("split") != split or payload.get("mode") != mode:
+            continue
+        if payload.get("profile") != profile_name:
+            continue
+        mtime = candidate.stat().st_mtime
+        if best_match is None or mtime > best_match[0]:
+            best_match = (mtime, payload, candidate)
+    if best_match is None:
+        return None
+    payload = dict(best_match[1])
+    payload["_baseline_path"] = str(best_match[2])
+    return payload
+
+
+def build_metric_delta(current: dict, baseline: dict) -> dict:
+    keys = sorted(set(current) | set(baseline))
+    return {
+        key: float(current.get(key, 0.0)) - float(baseline.get(key, 0.0))
+        for key in keys
+    }
 
 
 def write_payload(output_path: Path, payload: dict) -> None:
@@ -698,6 +1071,7 @@ def run(
     agents: dict[str, BizIntelAgent] = {}
     extractor = ClaimExtractor()
     verifier = EvidenceVerifier(use_dummy_model=(settings.llm_mode == "stub" or not settings.openai_api_key))
+    judge = LLMJudge()
     mode = describe_mode(load_models)
     existing_rows = load_existing_rows(output_path, version, split, mode, profile_name=profile_name) if resume else {}
     rows_by_item_id = dict(existing_rows)
@@ -759,8 +1133,10 @@ def run(
             scorable_markdown,
             build_required_facts(answer_row),
             item_evidence_store,
+            question_text=item["query"],
             extractor=extractor,
             verifier=verifier,
+            judge=judge,
         )
         gold_metrics = score_gold_answer_mapping(scorable_markdown, answer_row)
         research_metrics = score_research_trace(
@@ -774,6 +1150,16 @@ def run(
         min_sources = item["required_evidence"]["min_distinct_sources"]
         scope_supported = result["memo_object"].contract.get("scope_supported", True)
         combined_metrics["scope_supported"] = scope_supported
+        question_family = classify_question_family(item["query"], item.get("query_type", []))
+        answer_status_decision = derive_answer_status_decision(
+            {**metrics, **research_metrics},
+            scorable_markdown,
+            question_text=item["query"],
+            judge=judge,
+        )
+        answer_status = answer_status_decision["status"]
+        should_abstain_flag = should_abstain(metrics, research_metrics)
+        question_error_summary = summarize_question_errors(metrics, research_metrics)
         row = {
             "run_id": f"benchmark_{version}_{split}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
             "item_id": item_id,
@@ -782,12 +1168,52 @@ def run(
             "category": item["category"],
             "difficulty": item["difficulty"],
             "query_type": item.get("query_type", []),
+            "question_family": question_family,
+            "question_text": item["query"],
+            "final_answer": memo_markdown,
+            "scoreable_answer": scorable_markdown,
+            "answer_status": answer_status,
+            "answer_status_reason": answer_status_decision.get("reason"),
+            "rule_answer_status": answer_status_decision.get("rule_status"),
+            "rule_answer_status_reason": answer_status_decision.get("rule_reason"),
+            "llm_answer_status_reviewed": answer_status_decision.get("llm_reviewed", False),
+            "llm_answer_status_adjudicated": answer_status_decision.get("llm_adjudicated", False),
+            "should_abstain": should_abstain_flag,
+            "abstention_precision": (
+                1.0 if answer_status == "abstained" and should_abstain_flag
+                else 0.0 if answer_status == "abstained"
+                else None
+            ),
+            "abstention_recall": (
+                1.0 if should_abstain_flag and answer_status == "abstained"
+                else 0.0 if should_abstain_flag
+                else None
+            ),
+            "strong_support_rate": metrics.get("strong_support_rate", 0.0),
+            "weak_support_rate": metrics.get("weak_support_rate", 0.0),
+            "fabricated_citation_rate": metrics.get("fabricated_citation_rate", 0.0),
+            "contradiction_rate": metrics.get("contradiction_rate", 0.0),
+            "numeric_exact_match_rate": metrics.get("numeric_exact_match_rate", 0.0),
+            "primary_source_support_rate": metrics.get("primary_source_support_rate", 0.0),
+            "unsafe_publish_rate": metrics.get("unsafe_publish_rate", 0.0),
+            "unsupported_numeric_claim_rate": metrics.get("unsupported_numeric_claim_rate", 0.0),
+            "primary_source_missing_rate": metrics.get("primary_source_missing_rate", 0.0),
+            "atomic_claim_rate": metrics.get("atomic_claim_rate", 0.0),
+            "claim_extract_success_rate": metrics.get("claim_extract_success_rate", 0.0),
+            "period_match_rate": metrics.get("period_match_rate", 0.0),
+            "currency_match_rate": metrics.get("currency_match_rate", 0.0),
+            "directionality_match_rate": metrics.get("directionality_match_rate", 0.0),
             "retrieval_hit": retrieval_hit(gold_entries, memo_markdown, source_ids, min_sources),
             "citation_marker_coverage": metrics.get("citation_marker_coverage", 0.0),
             "verified_claim_coverage": metrics.get("verified_claim_coverage", 0.0),
             "unsupported_claim_rate": metrics["unsupported_claim_rate"],
             "required_fact_recall": metrics["required_fact_recall"],
             "avg_nli_score": metrics["avg_nli_score"],
+            "claim_error_counts": metrics.get("claim_error_counts", {}),
+            "claim_error_rates": metrics.get("claim_error_rates", {}),
+            "claim_type_counts": metrics.get("claim_type_counts", {}),
+            "claim_type_rates": metrics.get("claim_type_rates", {}),
+            "most_severe_failure_type": metrics.get("most_severe_failure_type"),
             "subquestion_completion_rate": research_metrics["subquestion_completion_rate"],
             "required_subquestion_coverage": research_metrics["required_subquestion_coverage"],
             "required_slot_coverage": research_metrics["required_slot_coverage"],
@@ -810,6 +1236,10 @@ def run(
             "item_companies": item_companies,
             "sources_used": source_ids,
             "matched_gold_docs": sorted(matched_gold_docs(gold_entries, scorable_markdown, source_ids)),
+            "claim_results": metrics.get("claim_diagnostics", []),
+            "final_cited_evidence": summarize_final_cited_evidence(metrics.get("claim_diagnostics", [])),
+            "retrieval_candidates": summarize_retrieval_candidates(result),
+            "question_error_summary": question_error_summary,
             "question_attempts": attempt_count,
             "runtime_error": last_error,
         }
@@ -824,6 +1254,12 @@ def run(
 
     rows = [rows_by_item_id[item_id] for item_id in item_ids if item_id in rows_by_item_id]
     payload = build_payload(version, split, mode, companies, rows, profile_name=profile_name, profile=profile)
+    baseline_payload = load_previous_payload(output_path, version, split, mode, profile_name=profile_name)
+    if baseline_payload is not None:
+        payload["baseline_path"] = baseline_payload.get("_baseline_path")
+        payload["baseline_timestamp"] = baseline_payload.get("timestamp")
+        payload["delta_from_baseline"] = build_metric_delta(payload.get("averages", {}), baseline_payload.get("averages", {}))
+        payload["run_summary"]["delta_from_baseline"] = payload["delta_from_baseline"]
     payload["artifact_root"] = str(benchmark_artifact_root(output_path))
     write_payload(output_path, payload)
     payload["report_path"] = str(write_benchmark_report(output_path, payload))

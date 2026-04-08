@@ -268,6 +268,56 @@ def test_generate_memo_rewrites_unsupported_nonnumeric_claims_to_insufficient_ev
     assert memo.sections[0].verification_results == []
 
 
+def test_generate_memo_prunes_primary_source_missing_high_risk_claim(force_stub_llm):
+    writer = ReportWriter()
+    plan = AnalysisPlan(mode=AnalysisMode.COMPANY, user_query="Analyze Stripe")
+    step_outputs = {
+        "financial_analysis": {
+            "content": "Stripe revenue was $1 billion [Source: stripe_blog].",
+            "sources_used": [{"source_id": "stripe_blog"}],
+            "raw_evidence": [
+                {
+                    "chunk_id": "c1",
+                    "source_id": "stripe_blog",
+                    "text": "Stripe revenue was $1 billion.",
+                }
+            ],
+        }
+    }
+
+    def fake_verify(claims, evidence_store):
+        return [
+            VerificationResult(
+                claim=Claim(
+                    claim_id="c1",
+                    text="Stripe revenue was $1 billion",
+                    section="financial_analysis",
+                    cited_sources=["stripe_blog"],
+                    contains_numbers=True,
+                    extracted_numbers=["$1 billion"],
+                    claim_type="numeric",
+                    risk_level="high",
+                    requires_primary_source=True,
+                ),
+                confidence=ConfidenceLevel.UNSUPPORTED,
+                nli_score=0.9,
+                numeric_verified=True,
+                supporting_evidence=["Stripe revenue was $1 billion."],
+                explanation="Missing primary source support.",
+                failure_reason="primary_source_missing",
+                failure_stage="rules",
+                supporting_source_ids=["stripe_blog"],
+                supporting_chunk_ids=["c1"],
+                primary_source_supported=False,
+            )
+        ]
+
+    writer.verifier.verify_memo = fake_verify
+    memo = writer.generate_memo(plan, step_outputs, [])
+
+    assert "revenue was $1 billion" not in memo.sections[0].content.lower()
+
+
 def test_live_writer_uses_small_llm_pass_when_evidence_notes_exist(monkeypatch):
     monkeypatch.setattr(settings, "llm_mode", "live")
     monkeypatch.setattr(settings, "openai_api_key", "sk-test-ascii-key")

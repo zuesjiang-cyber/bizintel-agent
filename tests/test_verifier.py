@@ -1,5 +1,8 @@
 from verification.claim_extractor import ClaimExtractor
+from verification.claim_normalizer import ClaimNormalizer
+from verification.evidence_selector import EvidenceCandidate, EvidenceSelector
 from verification.evidence_verifier import EvidenceVerifier
+from verification.rule_engine import RuleEngine
 from agent.schemas import Claim, ConfidenceLevel
 from agent.config import settings
 import numpy as np
@@ -72,6 +75,23 @@ class TestClaimExtractor:
         assert len(claims) == 1
         assert claims[0].cited_chunks == ["c1", "c2"]
         assert claims[0].cited_sources == ["jpmorgan_2022q2_10q", "jpmorgan_2022q2_10q"]
+
+    def test_extract_claims_prioritizes_question_aligned_direct_answer(self):
+        text = (
+            "- Capital expenditures were $1,577 million. [Chunk: c1] [Source: three_m_2018_10k]\n"
+            "- Foreign exchange had a positive impact of $102 million on revenue. "
+            "[Chunk: c2] [Source: three_m_2018_10k]"
+        )
+
+        claims = self.extractor.extract_claims(
+            text,
+            "summary",
+            focus_text="What is the FY2018 capital expenditure amount?",
+            max_claims=1,
+        )
+
+        assert len(claims) == 1
+        assert "capital expenditures" in claims[0].text.lower()
 
     def test_filter_insufficient_evidence_lines(self):
         text = "- Insufficient evidence in the source pack to verify this point directly."
@@ -259,6 +279,20 @@ class TestEvidenceVerifier:
 
         assert verifier._verify_numeric_alignment(claim, evidence_text) is True
 
+    def test_numeric_alignment_accepts_absolute_line_item_claim_for_parenthetical_outflow(self):
+        verifier = EvidenceVerifier(use_dummy_model=True)
+        claim = Claim(
+            claim_id="capex_line_item",
+            text="Capital expenditures were $1,577 million.",
+            section="hard_fact",
+            cited_sources=["three_m_2018_10k"],
+            contains_numbers=True,
+            extracted_numbers=["$1,577 million"],
+        )
+        evidence_text = "Capital expenditures (1,577)."
+
+        assert verifier._verify_numeric_alignment(claim, evidence_text) is True
+
     def test_verify_memo_keeps_derived_quick_ratio_claim_supported(self):
         verifier = EvidenceVerifier(use_dummy_model=True)
         claim = Claim(
@@ -382,3 +416,110 @@ class TestEvidenceVerifier:
         assert len(evidence_text) < len(long_text)
         assert "Network services revenue includes solutions designed to improve performance" in evidence_text
         assert "Fastly's network services revenue mix" in hypothesis
+
+
+class TestClaimNormalizer:
+    def test_normalizer_splits_growth_to_value_statement_and_extracts_fields(self):
+        claim = Claim(
+            claim_id="growth_to_value",
+            text="Revenue grew 18% to $12.3 billion in FY2024.",
+            section="financials",
+            cited_sources=["amd_2024_10k"],
+            contains_numbers=True,
+            extracted_numbers=["18%", "$12.3 billion"],
+        )
+
+        normalized = ClaimNormalizer().normalize_claim(claim)
+
+        assert len(normalized) == 2
+        assert normalized[0].text == "Revenue grew 18%"
+        assert normalized[0].metric == "revenue"
+        assert normalized[0].directionality == "up"
+        assert normalized[0].requires_primary_source is True
+        assert normalized[1].text.startswith("Revenue was $12.3 billion")
+        assert normalized[1].unit == "USD"
+        assert normalized[1].period == "FY2024"
+
+
+class TestEvidenceSelector:
+    def test_select_candidates_prefers_explicit_chunk_and_period_match(self):
+        selector = EvidenceSelector()
+        claim = Claim(
+            claim_id="period_aware",
+            text="AMD FY2022 revenue was $23.6 billion.",
+            section="financials",
+            cited_sources=["amd_2022_10k"],
+            cited_chunks=["c2"],
+            contains_numbers=True,
+            extracted_numbers=["$23.6 billion"],
+            claim_type="numeric",
+            period="FY2022",
+            metric="revenue",
+        )
+        evidence_store = {
+            "amd_2022_10k": [
+                {"chunk_id": "c1", "source_id": "amd_2022_10k", "text": "FY2021 revenue was $16.4 billion.", "source_type": "annual_report", "is_primary": True},
+                {"chunk_id": "c2", "source_id": "amd_2022_10k", "text": "FY2022 revenue was $23.6 billion.", "source_type": "annual_report", "is_primary": True},
+            ]
+        }
+
+        candidates = selector.select_candidates(claim, evidence_store)
+
+        assert candidates[0].chunk_ids == ["c2"]
+        assert "explicit_chunk_binding" in candidates[0].match_reasons
+        assert "period_match" in candidates[0].match_reasons
+
+
+class TestRuleEngine:
+    def setup_method(self):
+        self.rule_engine = RuleEngine()
+
+    def test_rule_engine_flags_period_mismatch(self):
+        claim = Claim(
+            claim_id="period_mismatch",
+            text="Revenue was $5 billion in FY2022.",
+            section="financials",
+            cited_sources=["amd_2022_10k"],
+            contains_numbers=True,
+            extracted_numbers=["$5 billion"],
+            claim_type="numeric",
+            period="FY2022",
+        )
+        candidate = EvidenceCandidate(
+            source_id="amd_2022_10k",
+            chunk_ids=["c1"],
+            text="Revenue was $5 billion in FY2021.",
+            source_type="annual_report",
+            is_primary=True,
+        )
+
+        result = self.rule_engine.evaluate_candidate(claim, candidate)
+
+        assert result.passed is False
+        assert result.failure_reason == "period_mismatch"
+        assert result.details["period_verified"] is False
+
+    def test_rule_engine_flags_primary_source_missing_for_high_risk_numeric_claim(self):
+        claim = Claim(
+            claim_id="primary_source_required",
+            text="Revenue was $5 billion.",
+            section="financials",
+            cited_sources=["amd_news"],
+            contains_numbers=True,
+            extracted_numbers=["$5 billion"],
+            claim_type="numeric",
+            requires_primary_source=True,
+        )
+        candidate = EvidenceCandidate(
+            source_id="amd_news",
+            chunk_ids=["c1"],
+            text="Revenue was $5 billion.",
+            source_type="news",
+            is_primary=False,
+        )
+
+        result = self.rule_engine.evaluate_candidate(claim, candidate)
+
+        assert result.passed is False
+        assert result.failure_reason == "primary_source_missing"
+        assert result.details["primary_source_supported"] is False

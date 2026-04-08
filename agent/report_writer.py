@@ -361,6 +361,11 @@ class ReportWriter:
             return section.content, claims, verification_results
 
         gated_claims = self.claim_extractor.extract_claims(gated_content, section.title)
+        if not gated_claims and all(
+            self._verification_action(result) == "downgrade"
+            for result in verification_results
+        ) and any(result.claim.contains_numbers for result in verification_results):
+            return section.content, claims, verification_results
         gated_results = self.verifier.verify_memo(gated_claims, evidence_store) if gated_claims else []
         return gated_content, gated_claims, gated_results
 
@@ -370,12 +375,13 @@ class ReportWriter:
                 "claim_text": result.claim.text,
                 "confidence": result.confidence.value,
                 "failure_reason": result.failure_reason,
+                "failure_stage": result.failure_stage,
                 "contains_numbers": result.claim.contains_numbers,
+                "risk_level": result.claim.risk_level,
                 "supporting_source_ids": result.supporting_source_ids,
             }
             for result in verification_results
-            if result.failure_reason in {"missing_citation", "bad_source_id", "numeric_mismatch", "low_entailment"}
-            or result.confidence == ConfidenceLevel.UNSUPPORTED
+            if self._verification_action(result) != "keep"
         ]
         if not flagged:
             return content
@@ -454,12 +460,7 @@ class ReportWriter:
         return build_stub_executive_summary([all_content])
 
     def _apply_verification_gating(self, content: str, verification_results: List) -> str:
-        gated_results = [
-            result
-            for result in verification_results
-            if result.failure_reason in {"missing_citation", "bad_source_id", "numeric_mismatch", "low_entailment"}
-            or result.confidence == ConfidenceLevel.UNSUPPORTED
-        ]
+        gated_results = [result for result in verification_results if self._verification_action(result) != "keep"]
         if not gated_results:
             return content
 
@@ -487,7 +488,8 @@ class ReportWriter:
                 kept_segments.append(segment)
                 continue
 
-            if matched_result.claim.contains_numbers or matched_result.failure_reason == "numeric_mismatch":
+            action = self._verification_action(matched_result)
+            if action == "delete":
                 continue
 
             replacement = "- Insufficient evidence in the source pack to verify this point directly."
@@ -541,6 +543,7 @@ class ReportWriter:
             f"- Moderate support: {stats['moderate']}\n"
             f"- Weak support: {stats['weak']}\n"
             f"- Unsupported: {stats['unsupported']}\n"
+            f"- Contradicted: {stats.get('contradicted', 0)}\n"
             f"- {coverage_label}: {stats['verified_claim_coverage']:.0%}\n"
             f"- {score_label}: {stats['avg_nli_score']:.2f}\n"
         )
@@ -573,3 +576,25 @@ class ReportWriter:
             return json.loads(stripped)
         except Exception:
             return None
+
+    def _verification_action(self, result: Any) -> str:
+        hard_delete_reasons = {
+            "missing_citation",
+            "bad_source_id",
+            "numeric_mismatch",
+            "period_mismatch",
+            "currency_mismatch",
+            "unit_mismatch",
+            "direction_mismatch",
+            "primary_source_missing",
+            "contradiction",
+        }
+        if result.confidence == ConfidenceLevel.CONTRADICTED:
+            return "delete"
+        if result.failure_reason in hard_delete_reasons:
+            return "delete"
+        if result.claim.contains_numbers and result.confidence == ConfidenceLevel.UNSUPPORTED:
+            return "delete"
+        if result.failure_reason == "low_entailment" or result.confidence in {ConfidenceLevel.WEAK, ConfidenceLevel.UNSUPPORTED}:
+            return "downgrade"
+        return "keep"

@@ -22,7 +22,9 @@ benchmark_index_key = MODULE.benchmark_index_key
 benchmark_index_profile = MODULE.benchmark_index_profile
 benchmark_artifact_root = MODULE.benchmark_artifact_root
 build_payload = MODULE.build_payload
+classify_question_family = MODULE.classify_question_family
 compute_averages = MODULE.compute_averages
+derive_answer_status_decision = MODULE.derive_answer_status_decision
 failure_tags = MODULE.failure_tags
 is_retryable_live_error = MODULE.is_retryable_live_error
 load_existing_rows = MODULE.load_existing_rows
@@ -109,6 +111,50 @@ def test_answer_quality_does_not_cap_on_exact_gold_miss_when_trust_metrics_hold(
     )
 
     assert quality == 5
+
+
+def test_derive_answer_status_decision_does_not_abstain_when_supported_claims_exist():
+    decision = derive_answer_status_decision(
+        {
+            "total_claims": 2,
+            "strong_support_rate": 1.0,
+            "fabricated_citation_rate": 0.0,
+            "contradiction_rate": 0.0,
+            "required_slot_coverage": 1.0,
+        },
+        "Insufficient evidence for one minor sub-question.\nRevenue was $10 million. [Source: amd_2022_10k]",
+    )
+
+    assert decision["status"] == "answered"
+    assert decision["rule_status"] == "answered"
+
+
+def test_derive_answer_status_decision_can_use_llm_judge_for_gray_zone():
+    class FakeJudge:
+        def adjudicate_answer_status(self, **kwargs):
+            return {"answer_status": "partial", "reason": "There is some usable answer content even though the memo hedges."}
+
+    decision = derive_answer_status_decision(
+        {
+            "total_claims": 1,
+            "strong_support_rate": 0.0,
+            "fabricated_citation_rate": 0.0,
+            "contradiction_rate": 0.0,
+            "required_slot_coverage": 0.0,
+        },
+        "Insufficient evidence in the source pack to support an executive summary.\nA customer accounted for 16% of revenue. [Source: amd_2022_10k]",
+        question_text="Did AMD report customer concentration in FY22?",
+        judge=FakeJudge(),
+    )
+
+    assert decision["rule_status"] == "abstained"
+    assert decision["status"] == "partial"
+    assert decision["llm_adjudicated"] is True
+
+
+def test_classify_question_family_uses_word_boundaries_for_ratio():
+    assert classify_question_family("Did AMD report customer concentration in FY22?", []) == "customer_concentration"
+    assert classify_question_family("What was AMD's quick ratio in FY22?", []) == "ratio"
 
 
 def test_failure_tags_include_unsupported_scope_when_controller_refuses_comparison():

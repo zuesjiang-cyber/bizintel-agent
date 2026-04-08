@@ -19,6 +19,9 @@ except ImportError:  # pragma: no cover - exercised in lightweight environments
 
 from agent.config import settings
 from agent.schemas import Claim, ConfidenceLevel, VerificationResult
+from verification.claim_normalizer import ClaimNormalizer
+from verification.evidence_selector import EvidenceCandidate, EvidenceSelector
+from verification.rule_engine import RuleCheckResult, RuleEngine
 
 logger = logging.getLogger(__name__)
 _NLI_MODEL_CACHE: Dict[tuple[str, str], object] = {}
@@ -62,22 +65,10 @@ class _DummyNLIModel:
 
 
 class EvidenceVerifier:
-    PRIMARY_SOURCE_TYPES = {
-        "annual_report",
-        "quarterly_report",
-        "quarterly_results",
-        "earnings_call_transcript",
-        "shareholder_letter",
-    }
-    FINANCIAL_KEYWORDS = {
-        "revenue", "margin", "profit", "profitability", "cash flow", "free cash flow",
-        "capex", "guidance", "debt", "eps", "ratio", "gross margin", "operating margin",
-        "ebitda", "qoq", "yoy", "year-over-year", "quarter-over-quarter", "growth",
-    }
-    DIRECTIONALITY_TOKENS = {
-        "up", "down", "increase", "increased", "decrease", "decreased", "grew", "growth",
-        "decline", "declined", "expanded", "improved", "fell", "rose",
-    }
+    PRIMARY_SOURCE_TYPES = RuleEngine.PRIMARY_SOURCE_TYPES
+    FINANCIAL_KEYWORDS = RuleEngine.FINANCIAL_KEYWORDS
+    DIRECTIONALITY_TOKENS = RuleEngine.DIRECTIONALITY_TOKENS
+    LINE_ITEM_CLAIM_SPECS = RuleEngine.LINE_ITEM_CLAIM_SPECS
 
     def __init__(self, use_dummy_model: bool = False):
         self._nli_model: Optional[CrossEncoder] = None
@@ -85,6 +76,9 @@ class EvidenceVerifier:
         self.strong_threshold = settings.entailment_strong_threshold
         self.moderate_threshold = settings.entailment_moderate_threshold
         self.device = _resolve_inference_device()
+        self.claim_normalizer = ClaimNormalizer()
+        self.evidence_selector = EvidenceSelector()
+        self.rule_engine = RuleEngine()
 
     def _get_model(self) -> CrossEncoder:
         if self._nli_model is None:
@@ -144,35 +138,7 @@ class EvidenceVerifier:
                 raise
 
     def _normalize_evidence_chunks(self, source_id: str, chunks: List[object]) -> List[dict]:
-        normalized = []
-        for idx, chunk in enumerate(chunks):
-            if isinstance(chunk, dict):
-                text = str(chunk.get("text", "")).strip()
-                if not text:
-                    continue
-                normalized.append(
-                    {
-                        "chunk_id": str(chunk.get("chunk_id") or f"{source_id}__{idx}"),
-                        "source_id": str(chunk.get("source_id") or source_id),
-                        "text": text,
-                        "source_type": chunk.get("source_type"),
-                        "is_primary": chunk.get("is_primary"),
-                    }
-                )
-            else:
-                text = str(chunk).strip()
-                if not text:
-                    continue
-                normalized.append(
-                    {
-                        "chunk_id": f"{source_id}__{idx}",
-                        "source_id": source_id,
-                        "text": text,
-                        "source_type": None,
-                        "is_primary": None,
-                    }
-                )
-        return normalized
+        return self.evidence_selector.normalize_evidence_chunks(source_id, chunks)
 
     def _extract_relevant_excerpt(self, text: str, focus_text: str, max_chars: int = 900) -> str:
         normalized = re.sub(r"\s+", " ", (text or "")).strip()
@@ -243,30 +209,25 @@ class EvidenceVerifier:
         return score + density_bonus - length_penalty
 
     def _select_candidate_chunks(self, claim: Claim, chunks: List[object]) -> List[dict]:
-        if chunks and not isinstance(chunks[0], dict):
-            chunks = self._normalize_evidence_chunks("anonymous_source", chunks)
+        normalized = chunks
+        if normalized and not isinstance(normalized[0], dict):
+            normalized = self._normalize_evidence_chunks("anonymous_source", list(normalized))
+        candidates = self.evidence_selector.select_from_chunks(claim, normalized)
+        selected = []
+        for candidate in candidates:
+            if len(candidate.chunk_ids) != 1:
+                continue
+            selected.append(
+                {
+                    "chunk_id": candidate.chunk_ids[0],
+                    "source_id": candidate.source_id,
+                    "text": candidate.text,
+                    "source_type": candidate.source_type,
+                    "is_primary": candidate.is_primary,
+                }
+            )
         limit = max(1, int(settings.verification_max_chunks_per_source))
-        if len(chunks) <= limit:
-            return chunks
-
-        claim_tokens = set(re.findall(r"\b\w+\b", claim.text.lower()))
-        claim_numbers = {num.replace("$", "").replace(",", "").strip() for num in claim.extracted_numbers}
-
-        scored = []
-        for idx, chunk in enumerate(chunks):
-            chunk_text = chunk["text"]
-            chunk_lower = chunk_text.lower()
-            chunk_tokens = set(re.findall(r"\b\w+\b", chunk_lower))
-            overlap = len(claim_tokens & chunk_tokens)
-            numeric_hits = sum(1 for num in claim_numbers if num and num in chunk_text)
-            score = (numeric_hits * 1000) + overlap
-            scored.append((score, idx, chunk))
-
-        scored.sort(key=lambda row: (row[0], -row[1]), reverse=True)
-        selected = [chunk for _, _, chunk in scored[:limit]]
-        if not any(score > 0 for score, _, _ in scored[:limit]):
-            return chunks[:limit]
-        return selected
+        return selected[:limit] if selected else list(normalized)[:limit]
 
     def verify_memo(self, claims: List[Claim], evidence_store: Dict[str, List[object]]) -> List[VerificationResult]:
         """
@@ -276,178 +237,163 @@ class EvidenceVerifier:
         if not claims:
             return []
 
+        normalized_claims = self.claim_normalizer.normalize_claims(claims)
         results = []
         pairs_to_score = []
-        claim_evidence_map = []  # 记录每个 pair 对应的 (claim_idx, evidence_chunk)
+        claim_candidate_map: List[tuple[str, EvidenceCandidate]] = []
+        temp_results: Dict[str, VerificationResult] = {}
 
-        # 1. 准备待打分的 (evidence, claim) 必须对
-        # NLI 模型的输入顺序通常是 (Premise, Hypothesis) = (Evidence, Claim)
-        for i, claim in enumerate(claims):
-            if not claim.cited_sources or all(source_id == "no_citation" for source_id in claim.cited_sources):
-                results.append(VerificationResult(
-                    claim=claim,
-                    confidence=ConfidenceLevel.UNSUPPORTED,
-                    nli_score=0.0,
-                    numeric_verified=False if claim.contains_numbers else None,
-                    supporting_evidence=[],
-                    explanation="Claim does not include a valid citation marker.",
-                    failure_reason="missing_citation",
-                ))
+        for claim in normalized_claims:
+            structure_check = self.rule_engine.check_claim_structure(claim, evidence_store)
+            if not structure_check.passed:
+                temp_results[claim.claim_id] = self._build_failed_result(claim, structure_check)
                 continue
 
-            has_valid_source = False
-            has_available_chunks = False
-            unique_cited_sources = list(dict.fromkeys(source_id for source_id in claim.cited_sources if source_id != "no_citation"))
-            cited_chunk_ids = [chunk_id for chunk_id in claim.cited_chunks if chunk_id]
-            requires_combined_candidate = len(list(dict.fromkeys(cited_chunk_ids))) > 1
-            combined_chunks: List[dict] = []
-            for source_id in unique_cited_sources:
-                if source_id in evidence_store:
-                    has_valid_source = True
-                    normalized_chunks = self._normalize_evidence_chunks(source_id, evidence_store[source_id])
-                    if claim.cited_chunks:
-                        normalized_chunks = [
-                            chunk for chunk in normalized_chunks
-                            if chunk["chunk_id"] in claim.cited_chunks
-                        ]
-                    if requires_combined_candidate:
-                        combined_chunks.extend(normalized_chunks)
-                        continue
-                    if normalized_chunks:
-                        has_available_chunks = True
-                    selected_chunks = self._select_candidate_chunks(claim, normalized_chunks)
-                    for chunk in selected_chunks:
-                        excerpt = self._extract_relevant_excerpt(chunk["text"], claim.text)
-                        chunk_for_scoring = {**chunk, "excerpt_text": excerpt}
-                        pairs_to_score.append((excerpt, claim.text))
-                        claim_evidence_map.append((i, chunk_for_scoring))
-
-            if requires_combined_candidate:
-                ordered_chunks = self._order_chunks_for_claim(claim, combined_chunks)
-                expected_chunk_ids = list(dict.fromkeys(cited_chunk_ids))
-                if expected_chunk_ids and {chunk["chunk_id"] for chunk in ordered_chunks} >= set(expected_chunk_ids):
-                    combined_candidate = self._combine_chunks_for_claim(claim, ordered_chunks)
-                    pairs_to_score.append((combined_candidate["excerpt_text"], claim.text))
-                    claim_evidence_map.append((i, combined_candidate))
-                    has_available_chunks = True
-
-            if not has_valid_source:
-                # 没有任何有效来源，直接判无支撑
-                results.append(VerificationResult(
+            candidates = self.evidence_selector.select_candidates(claim, evidence_store)
+            if not candidates:
+                temp_results[claim.claim_id] = VerificationResult(
                     claim=claim,
                     confidence=ConfidenceLevel.UNSUPPORTED,
                     nli_score=0.0,
-                    numeric_verified=False if claim.contains_numbers else None,
-                    supporting_evidence=[],
-                    explanation="Claim cites sources that are not present in the evidence store.",
-                    failure_reason="bad_source_id",
-                ))
-                continue
-
-            if not has_available_chunks:
-                results.append(VerificationResult(
-                    claim=claim,
-                    confidence=ConfidenceLevel.UNSUPPORTED,
-                    nli_score=0.0,
-                    numeric_verified=False if claim.contains_numbers else None,
+                    numeric_verified=False if self._claim_requires_numeric_gate(claim) else None,
                     supporting_evidence=[],
                     explanation="Claim cites a known source, but no evidence chunks were available for scoring.",
                     failure_reason="no_supporting_chunk",
-                ))
+                    failure_stage="evidence",
+                    supporting_source_ids=structure_check.details.get("known_sources", []),
+                    primary_source_supported=None,
+                    verdict_trace={
+                        "structure_check": self._serialize_rule_check(structure_check),
+                        "candidate_count": 0,
+                    },
+                    review_notes=["No candidate evidence chunk survived source-aware selection."],
+                )
+                continue
+
+            for candidate in candidates:
+                excerpt = self._extract_relevant_excerpt(candidate.text, claim.text)
+                candidate.excerpt_text = excerpt
+                if len(candidate.chunk_ids) > 1:
+                    candidate.excerpt_texts = [excerpt]
+                pairs_to_score.append((excerpt, claim.text))
+                claim_candidate_map.append((claim.claim_id, candidate))
 
         if not pairs_to_score:
-            return results
+            return [temp_results[claim.claim_id] for claim in normalized_claims]
 
         # 2. 批量跑 NLI 模型
-        # NLI 输出通常是 3 分类：[Contradiction, Entailment, Neutral]
-        # 这里用的是 cross-encoder/nli-deberta-v3-base，输出为 [Contradiction, Entailment, Neutral]
         logger.info(f"Running NLI verification for {len(pairs_to_score)} pairs...")
         model = self._get_model()
         scores = self._predict_pairs(model, pairs_to_score)
 
-        # 提取 Entailment (蕴含) 的分数。对于 deberta-v3-base，Entailment 在 index 1
-        # 但我们为了稳妥，先转成 prob，取 index 1
         if scores.ndim == 1:
             scores = np.expand_dims(scores, axis=0)
         exp_scores = np.exp(scores - np.max(scores, axis=1, keepdims=True))
         probs = exp_scores / np.sum(exp_scores, axis=1, keepdims=True)
         entailment_scores = probs[:, 1]
+        contradiction_scores = probs[:, 0]
 
-        # 3. 聚合结果
-        # 一个 claim 可能对应多个 evidence chunk，取最高分
-        best_scores = {i: 0.0 for i in range(len(claims))}
-        best_evidence = {i: None for i in range(len(claims))}
+        candidate_scores: Dict[str, List[dict]] = {}
+        for pair_idx, (claim_id, candidate) in enumerate(claim_candidate_map):
+            candidate_scores.setdefault(claim_id, []).append(
+                {
+                    "candidate": candidate,
+                    "entailment": float(entailment_scores[pair_idx]),
+                    "contradiction": float(contradiction_scores[pair_idx]),
+                }
+            )
 
-        for pair_idx, (claim_idx, chunk) in enumerate(claim_evidence_map):
-            score = float(entailment_scores[pair_idx])
-            if score > best_scores[claim_idx]:
-                best_scores[claim_idx] = score
-                best_evidence[claim_idx] = chunk
-
-        # 4. 生成最终判定
-        # 需要注意的是，我们之前可能已经提前把没有 source 的 claim 放进了 results。
-        # 为了保持顺序，我们用一个临时字典
-        temp_results = {}
-        for r in results:
-            temp_results[r.claim.claim_id] = r
-
-        for i, claim in enumerate(claims):
+        for claim in normalized_claims:
             if claim.claim_id in temp_results:
                 continue
+            scored_candidates = candidate_scores.get(claim.claim_id, [])
+            if not scored_candidates:
+                temp_results[claim.claim_id] = VerificationResult(
+                    claim=claim,
+                    confidence=ConfidenceLevel.UNSUPPORTED,
+                    nli_score=0.0,
+                    numeric_verified=False if self._claim_requires_numeric_gate(claim) else None,
+                    supporting_evidence=[],
+                    explanation="No evidence candidates were available after scoring.",
+                    failure_reason="no_supporting_chunk",
+                    failure_stage="evidence",
+                    supporting_source_ids=[source_id for source_id in claim.cited_sources if source_id != "no_citation"],
+                    review_notes=["Candidate scoring produced no usable evidence rows."],
+                )
+                continue
 
-            score = best_scores[i]
-            evidence = best_evidence[i]
-            primary_source_supported = self._has_primary_source(evidence)
-
-            # 规则 1：检查数字是否匹配
-            numeric_verified = None
-            if self._claim_requires_numeric_gate(claim):
-                numeric_verified = self._verify_numeric_alignment(claim, evidence["text"] if evidence else "")
-
-            # 规则 2：综合 NLI 和规则得出最终置信度
+            explicit_chunk_set = set(dict.fromkeys(chunk_id for chunk_id in claim.cited_chunks if chunk_id))
+            best_entry = max(
+                scored_candidates,
+                key=lambda item: (
+                    1 if explicit_chunk_set and explicit_chunk_set.issubset(set(item["candidate"].chunk_ids)) else 0,
+                    item["entailment"],
+                    item["candidate"].match_score,
+                    -item["contradiction"],
+                ),
+            )
+            candidate = best_entry["candidate"]
+            score = float(best_entry["entailment"])
+            contradiction_score = float(best_entry["contradiction"])
+            rule_check = self.rule_engine.evaluate_candidate(claim, candidate)
+            contradiction_detected = bool(rule_check.details.get("contradiction_detected"))
             confidence = ConfidenceLevel.WEAK
+            failure_reason = None
+            failure_stage = None
             if score >= self.strong_threshold:
                 confidence = ConfidenceLevel.STRONG
             elif score >= self.moderate_threshold:
                 confidence = ConfidenceLevel.MODERATE
 
-            failure_reason = None
-            # 如果数字校验失败，降级
-            if numeric_verified is False:
-                failure_reason = "numeric_mismatch"
+            if contradiction_detected or (
+                contradiction_score >= self.strong_threshold and contradiction_score > score + 0.1
+            ):
+                confidence = ConfidenceLevel.CONTRADICTED
+                failure_reason = "contradiction"
+                failure_stage = "semantics" if rule_check.passed else rule_check.stage
+            elif not rule_check.passed:
                 confidence = ConfidenceLevel.UNSUPPORTED
-            elif self._claim_requires_primary_source(claim) and primary_source_supported is False:
-                failure_reason = "primary_source_missing"
-                confidence = ConfidenceLevel.UNSUPPORTED
+                failure_reason = rule_check.failure_reason
+                failure_stage = rule_check.stage
             elif score < self.moderate_threshold:
                 failure_reason = "low_entailment"
+                failure_stage = "semantics"
 
             explanation = (
-                f"NLI Entailment Score: {score:.2f}. "
-                f"Numeric match: {'Yes' if numeric_verified else ('No' if numeric_verified is False else 'N/A')}. "
-                f"Primary source: {'Yes' if primary_source_supported else ('No' if primary_source_supported is False else 'N/A')}."
+                f"NLI entailment={score:.2f}; contradiction={contradiction_score:.2f}. "
+                f"Numeric match={'Yes' if rule_check.details.get('numeric_verified') else ('No' if rule_check.details.get('numeric_verified') is False else 'N/A')}. "
+                f"Primary source={'Yes' if rule_check.details.get('primary_source_supported') else ('No' if rule_check.details.get('primary_source_supported') is False else 'N/A')}."
             )
 
-            res = VerificationResult(
+            temp_results[claim.claim_id] = VerificationResult(
                 claim=claim,
                 confidence=confidence,
                 nli_score=score,
-                numeric_verified=numeric_verified,
-                supporting_evidence=(evidence.get("excerpt_texts") or [evidence.get("excerpt_text") or evidence["text"]]) if evidence else [],
+                numeric_verified=rule_check.details.get("numeric_verified"),
+                supporting_evidence=[candidate.excerpt_text or candidate.text],
                 explanation=explanation,
                 failure_reason=failure_reason,
-                supporting_source_ids=(evidence.get("source_ids") or [evidence["source_id"]]) if evidence else [],
-                supporting_chunk_ids=(evidence.get("chunk_ids") or [evidence["chunk_id"]]) if evidence else [],
-                primary_source_supported=primary_source_supported,
+                failure_stage=failure_stage,
+                supporting_source_ids=[candidate.source_id],
+                supporting_chunk_ids=list(candidate.chunk_ids),
+                primary_source_supported=rule_check.details.get("primary_source_supported"),
+                period_verified=rule_check.details.get("period_verified"),
+                currency_verified=rule_check.details.get("currency_verified"),
+                unit_verified=rule_check.details.get("unit_verified"),
+                directionality_verified=rule_check.details.get("directionality_verified"),
+                contradiction_detected=contradiction_detected or confidence == ConfidenceLevel.CONTRADICTED,
+                verdict_trace={
+                    "selected_candidate": self._serialize_candidate_trace(best_entry),
+                    "candidate_scores": [
+                        self._serialize_candidate_trace(entry)
+                        for entry in sorted(scored_candidates, key=lambda item: (item["entailment"], item["candidate"].match_score), reverse=True)[:5]
+                    ],
+                    "rule_check": self._serialize_rule_check(rule_check),
+                },
+                review_notes=list(rule_check.details.get("review_notes", [])),
             )
-            temp_results[claim.claim_id] = res
 
-        # 按原顺序返回
-        final_results = []
-        for claim in claims:
-            final_results.append(temp_results[claim.claim_id])
-
-        return final_results
+        return [temp_results[claim.claim_id] for claim in normalized_claims]
 
     def score_hypothesis_against_chunks(self, hypothesis: str, chunks: List[object]) -> List[dict]:
         normalized_chunks = self._normalize_evidence_chunks("anonymous_source", chunks)
@@ -487,131 +433,52 @@ class EvidenceVerifier:
     def _has_primary_source(self, evidence: Optional[dict]) -> Optional[bool]:
         if evidence is None:
             return None
-        if "is_primary" in evidence and evidence.get("is_primary") is not None:
-            return bool(evidence.get("is_primary"))
-        source_type = (evidence.get("source_type") or "").strip().lower()
-        if source_type:
-            return source_type in self.PRIMARY_SOURCE_TYPES
-        return None
+        if isinstance(evidence, dict):
+            candidate = EvidenceCandidate(
+                source_id=str(evidence.get("source_id", "")),
+                chunk_ids=list(evidence.get("chunk_ids") or [str(evidence.get("chunk_id", ""))]),
+                text=str(evidence.get("text", "")),
+                source_type=evidence.get("source_type"),
+                is_primary=evidence.get("is_primary"),
+            )
+            return self.rule_engine._has_primary_source(candidate)
+        return self.rule_engine._has_primary_source(evidence)
 
     def _claim_requires_primary_source(self, claim: Claim) -> bool:
-        return self._claim_requires_numeric_gate(claim)
+        return self.rule_engine.claim_requires_primary_source(claim)
 
     def _claim_requires_numeric_gate(self, claim: Claim) -> bool:
-        if claim.contains_numbers:
-            return True
-        text = claim.text.lower()
-        return any(keyword in text for keyword in self.FINANCIAL_KEYWORDS)
+        return self.rule_engine.claim_requires_numeric_gate(claim)
 
     def _verify_numeric_alignment(self, claim: Claim, evidence_text: str) -> bool:
-        if not evidence_text:
-            return False
-
-        evidence_lower = evidence_text.lower()
-        extracted_numbers = [num for num in claim.extracted_numbers if num.strip()]
-        normalized_haystack = self._normalize_numeric_haystack(evidence_text)
-        missing_numbers = []
-        if extracted_numbers:
-            for num in extracted_numbers:
-                clean_num = self._normalize_numeric_token(num)
-                if clean_num not in normalized_haystack:
-                    missing_numbers.append(clean_num)
-            if missing_numbers and not self._supports_derived_numeric_claim(claim, evidence_text):
-                return False
-
-        for token in self._extract_period_tokens(claim.text):
-            if token.lower() not in evidence_lower:
-                return False
-
-        for token in self._extract_currency_tokens(claim.text):
-            if token.lower() not in evidence_lower:
-                return False
-
-        claim_directionality = self._extract_directionality_tokens(claim.text)
-        evidence_directionality = self._extract_directionality_tokens(evidence_text)
-        if claim_directionality and not (claim_directionality & evidence_directionality):
-            return False
-
-        return True
+        return self.rule_engine.verify_numeric_alignment(claim, evidence_text)
 
     def _supports_derived_numeric_claim(self, claim: Claim, evidence_text: str) -> bool:
-        lowered = claim.text.lower()
-        if "quick ratio" in lowered:
-            return self._supports_quick_ratio_claim(claim, evidence_text)
-        if "working capital" in lowered:
-            return self._supports_working_capital_claim(claim, evidence_text)
-        return False
+        return self.rule_engine._supports_derived_numeric_claim(claim, evidence_text)
+
+    def _supports_line_item_numeric_claim(self, claim: Claim, evidence_text: str) -> bool:
+        return self.rule_engine._supports_line_item_numeric_claim(claim, evidence_text)
 
     def _supports_quick_ratio_claim(self, claim: Claim, evidence_text: str) -> bool:
-        claim_values = self._parse_claim_numeric_values(claim)
-        if not claim_values:
-            return False
-        claimed_ratio = claim_values[0]
-        current_liabilities = self._extract_labeled_numeric_value(evidence_text, ["total current liabilities"])
-        if current_liabilities in (None, 0):
-            return False
-
-        current_assets = self._extract_labeled_numeric_value(evidence_text, ["total current assets"])
-        inventories = self._extract_labeled_numeric_value(evidence_text, ["inventories"])
-        if current_assets is not None and inventories is not None:
-            computed = (current_assets - inventories) / current_liabilities
-            if abs(computed - claimed_ratio) <= 0.03:
-                return True
-
-        cash = self._extract_labeled_numeric_value(evidence_text, ["cash and cash equivalents"])
-        short_term_investments = self._extract_labeled_numeric_value(evidence_text, ["short-term investments"])
-        accounts_receivable = self._extract_labeled_numeric_value(
-            evidence_text,
-            ["accounts receivable, net", "accounts receivable"],
-        )
-        if cash is None or short_term_investments is None or accounts_receivable is None:
-            return False
-        computed = (cash + short_term_investments + accounts_receivable) / current_liabilities
-        return abs(computed - claimed_ratio) <= 0.03
+        return self.rule_engine._supports_quick_ratio_claim(claim, evidence_text)
 
     def _supports_working_capital_claim(self, claim: Claim, evidence_text: str) -> bool:
-        current_assets = self._extract_labeled_numeric_value(evidence_text, ["total current assets"])
-        current_liabilities = self._extract_labeled_numeric_value(evidence_text, ["total current liabilities"])
-        if current_assets is None or current_liabilities is None:
-            return False
-        working_capital = current_assets - current_liabilities
-        lowered = claim.text.lower()
-        if "positive" in lowered and working_capital < 0:
-            return False
-        if "negative" in lowered and working_capital >= 0:
-            return False
-        claim_values = self._parse_claim_numeric_values(claim)
-        if not claim_values:
-            return True
-        return abs(abs(working_capital) - abs(claim_values[0])) <= max(1.0, abs(working_capital) * 0.02)
+        return self.rule_engine._supports_working_capital_claim(claim, evidence_text)
 
     def _normalize_numeric_token(self, token: str) -> str:
-        return token.lower().replace("$", "").replace(",", "").strip()
+        return self.rule_engine._normalize_numeric_token(token)
 
     def _normalize_numeric_haystack(self, text: str) -> set[str]:
-        return {
-            self._normalize_numeric_token(match.group(0))
-            for match in NUMERIC_TOKEN_PATTERN.finditer(text)
-            if match.group(0).strip()
-        }
+        return self.rule_engine._normalize_numeric_haystack(text)
 
     def _extract_period_tokens(self, text: str) -> set[str]:
-        return {
-            match.group(0)
-            for match in re.finditer(r'\b(?:q[1-4]\s*20\d{2}|fy\s*20\d{2}|20\d{2})\b', text, re.IGNORECASE)
-        }
+        return self.rule_engine._extract_period_tokens(text)
 
     def _extract_currency_tokens(self, text: str) -> set[str]:
-        tokens = set()
-        if "$" in text:
-            tokens.add("$")
-        for token in re.findall(r'\b(?:usd|dollars?)\b', text, re.IGNORECASE):
-            tokens.add(token.lower())
-        return tokens
+        return self.rule_engine._extract_currency_tokens(text)
 
     def _extract_directionality_tokens(self, text: str) -> set[str]:
-        lowered = text.lower()
-        return {token for token in self.DIRECTIONALITY_TOKENS if token in lowered}
+        return self.rule_engine._extract_directionality_tokens(text)
 
     def _order_chunks_for_claim(self, claim: Claim, chunks: List[dict]) -> List[dict]:
         if not claim.cited_chunks:
@@ -651,56 +518,13 @@ class EvidenceVerifier:
         }
 
     def _extract_labeled_numeric_value(self, text: str, labels: List[str]) -> Optional[float]:
-        normalized = re.sub(r"\s+", " ", text or "").strip()
-        if not normalized:
-            return None
-        for label in labels:
-            pattern = re.compile(
-                rf"{re.escape(label)}.{{0,40}}?(\(?\$?\s*\d[\d,]*(?:\.\d+)?\)?(?:\s*(?:billion|million|thousand|bn|mn|b|m|k))?)",
-                re.IGNORECASE,
-            )
-            match = pattern.search(normalized)
-            if not match:
-                continue
-            value = self._parse_numeric_literal(match.group(1))
-            if value is not None:
-                return value
-        return None
+        return self.rule_engine._extract_labeled_numeric_value(text, labels)
 
     def _parse_claim_numeric_values(self, claim: Claim) -> List[float]:
-        values: List[float] = []
-        for raw in claim.extracted_numbers:
-            value = self._parse_numeric_literal(raw)
-            if value is not None:
-                values.append(value)
-        return values
+        return self.rule_engine._parse_claim_numeric_values(claim)
 
     def _parse_numeric_literal(self, literal: str) -> Optional[float]:
-        cleaned = str(literal or "").strip().lower().replace("$", "").replace(",", "").replace(" ", "")
-        if not cleaned:
-            return None
-        negative = cleaned.startswith("(") and cleaned.endswith(")")
-        cleaned = cleaned.strip("()")
-        multiplier = 1.0
-        for suffix, factor in (
-            ("billion", 1_000.0),
-            ("bn", 1_000.0),
-            ("b", 1_000.0),
-            ("million", 1.0),
-            ("mn", 1.0),
-            ("m", 1.0),
-            ("thousand", 0.001),
-            ("k", 0.001),
-        ):
-            if cleaned.endswith(suffix):
-                cleaned = cleaned[: -len(suffix)]
-                multiplier = factor
-                break
-        try:
-            value = float(cleaned) * multiplier
-        except ValueError:
-            return None
-        return -value if negative else value
+        return self.rule_engine._parse_numeric_literal(literal)
 
     def summary_stats(self, results: List[VerificationResult]) -> dict:
         """生成验证统计信息"""
@@ -708,7 +532,7 @@ class EvidenceVerifier:
         if total == 0:
             return {
                 "total_claims": 0,
-                "strong": 0, "moderate": 0, "weak": 0, "unsupported": 0,
+                "strong": 0, "moderate": 0, "weak": 0, "unsupported": 0, "contradicted": 0,
                 "citation_marker_coverage": 0.0, "verified_claim_coverage": 0.0, "avg_nli_score": 0.0,
                 "numeric_error_rate": 0.0, "primary_source_coverage": 0.0,
             }
@@ -717,7 +541,7 @@ class EvidenceVerifier:
         for r in results:
             counts[r.confidence] += 1
 
-        supported = total - counts[ConfidenceLevel.UNSUPPORTED]
+        supported = total - counts[ConfidenceLevel.UNSUPPORTED] - counts[ConfidenceLevel.CONTRADICTED]
         cited = sum(
             1
             for r in results
@@ -734,9 +558,49 @@ class EvidenceVerifier:
             "moderate": counts[ConfidenceLevel.MODERATE],
             "weak": counts[ConfidenceLevel.WEAK],
             "unsupported": counts[ConfidenceLevel.UNSUPPORTED],
+            "contradicted": counts[ConfidenceLevel.CONTRADICTED],
             "citation_marker_coverage": cited / total if total > 0 else 0.0,
             "verified_claim_coverage": supported / total if total > 0 else 0.0,
             "avg_nli_score": sum(r.nli_score for r in results) / total,
             "numeric_error_rate": len(numeric_errors) / len(numeric_claims) if numeric_claims else 0.0,
             "primary_source_coverage": len(primary_supported) / len(primary_required) if primary_required else 0.0,
+        }
+
+    def _build_failed_result(self, claim: Claim, rule_check: RuleCheckResult) -> VerificationResult:
+        details = rule_check.details or {}
+        requires_numeric = self._claim_requires_numeric_gate(claim)
+        supporting_sources = details.get("known_sources", [])
+        explanation = details.get("review_notes", ["Verification failed before semantic scoring."])[0]
+        return VerificationResult(
+            claim=claim,
+            confidence=ConfidenceLevel.UNSUPPORTED,
+            nli_score=0.0,
+            numeric_verified=False if requires_numeric else None,
+            supporting_evidence=[],
+            explanation=explanation,
+            failure_reason=rule_check.failure_reason,
+            failure_stage=rule_check.stage,
+            supporting_source_ids=list(supporting_sources),
+            primary_source_supported=None,
+            verdict_trace={"structure_check": self._serialize_rule_check(rule_check)},
+            review_notes=list(details.get("review_notes", [])),
+        )
+
+    def _serialize_rule_check(self, rule_check: RuleCheckResult) -> dict:
+        return {
+            "passed": rule_check.passed,
+            "stage": rule_check.stage,
+            "failure_reason": rule_check.failure_reason,
+            "details": dict(rule_check.details or {}),
+        }
+
+    def _serialize_candidate_trace(self, entry: dict) -> dict:
+        candidate = entry["candidate"]
+        return {
+            "source_id": candidate.source_id,
+            "chunk_ids": list(candidate.chunk_ids),
+            "match_score": candidate.match_score,
+            "match_reasons": list(candidate.match_reasons),
+            "entailment": entry["entailment"],
+            "contradiction": entry["contradiction"],
         }

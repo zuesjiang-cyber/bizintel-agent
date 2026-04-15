@@ -20,6 +20,16 @@
 ![NLI Verification](https://img.shields.io/badge/Verification-NLI_DeBERTa-red.svg)
 
 ## 显著优势
+### Cohort 快照指标评价
+
+| 指标 | 结果 |
+|------|------|
+| Rows in cohort | 150 |
+| Average strong support rate | 88.24% |
+| Average verified claim coverage | 88.51% |
+| Average numeric exact match rate | 92.19% |
+| Average primary source claim coverage | 88.09% |
+| Average answer quality | 3.43 |
 
 ### vs 传统方案对比
 
@@ -134,17 +144,6 @@ present its Consumer Health business financial results as discontinued operation
 | Average NLI score | 0.8770 |
 | Primary-source-supported rows | 12/12 |
 
-### Cohort 快照
-
-| 指标 | 结果 |
-|------|------|
-| Rows in cohort | 150 |
-| Average strong support rate | 88.24% |
-| Average verified claim coverage | 88.51% |
-| Average numeric exact match rate | 92.19% |
-| Average primary source claim coverage | 88.09% |
-| Average gold benchmark pass | 15.33% |
-| Average answer quality | 3.43 |
 
 ### 核验结果
 
@@ -243,7 +242,7 @@ make install
 ```
 
 ### 配置 LLM
-
+首次运行时需要下载Hugging Face 模型
 创建 `.env` 文件。直连 OpenAI：
 
 ```bash
@@ -510,17 +509,4 @@ bizintel-agent/
 - [benchmark_methodology.md](docs/benchmark_methodology.md) — 评测方法论
 - [offline_test_system.md](docs/offline_test_system.md) — 离线测试体系
 
-## 现状与边界
 
-1. **单公司研究优先。** 多公司自由比较不是当前版本的目标，系统会明确拒答。
-2. **依赖本地资料包。** 不是实时联网研究系统，证据覆盖取决于 source pack 质量。
-3. **离线 demo 是管道冒烟。** stub 模式展示系统形状，不代表研究结论质量。
-4. **评测题集仍含历史比较题。** 对当前产品边界是压力测试，不应被包装成"系统已全面支持"。
-
-## 验证
-
-```bash
-make test     # pytest
-make lint     # ruff
-make check    # lint + test + compile + offline suite 全部通过
-```

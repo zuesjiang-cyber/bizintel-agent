@@ -1,0 +1,13 @@
+{
+  "company": "financebench_pepsico",
+  "available_periods": [
+    "2021FY",
+    "2022FY",
+    "2023Q1",
+    "2023_event"
+  ],
+  "context_periods": [],
+  "latest_period": "2023_event",
+  "comparison_period": "2023Q1",
+  "fiscal_year_end": "12-31"
+}

@@ -1,0 +1,10 @@
+{
+  "company": "financebench_kraft_heinz",
+  "available_periods": [
+    "2019FY"
+  ],
+  "context_periods": [],
+  "latest_period": "2019FY",
+  "comparison_period": null,
+  "fiscal_year_end": "12-31"
+}

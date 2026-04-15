@@ -1,0 +1,35 @@
+{
+  "company": "financebench_boeing",
+  "aliases": [
+    "Boeing"
+  ],
+  "currency": "USD",
+  "documents": [
+    {
+      "doc_id": "boeing_2018_10k",
+      "path": "data/raw/financebench_boeing/docs/boeing_2018_10k.pdf",
+      "title": "Boeing 10K 2018FY (BOEING_2018_10K)",
+      "source_type": "annual_report",
+      "period": "2018FY",
+      "doc_date": null,
+      "published_at": null,
+      "issuer": "Boeing",
+      "is_primary": true,
+      "url": "https://d18rn0p25nwr6d.cloudfront.net/CIK-0000012927/fdc164e4-475f-416e-ac75-acd03df4d646.pdf",
+      "language": "en"
+    },
+    {
+      "doc_id": "boeing_2022_10k",
+      "path": "data/raw/financebench_boeing/docs/boeing_2022_10k.pdf",
+      "title": "Boeing 10K 2022FY (BOEING_2022_10K)",
+      "source_type": "annual_report",
+      "period": "2022FY",
+      "doc_date": null,
+      "published_at": null,
+      "issuer": "Boeing",
+      "is_primary": true,
+      "url": "https://d18rn0p25nwr6d.cloudfront.net/CIK-0000012927/c93682a4-8b3c-4251-a2ed-97c4e474a214.pdf",
+      "language": "en"
+    }
+  ]
+}

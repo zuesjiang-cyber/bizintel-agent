@@ -1,0 +1,35 @@
+{
+  "company": "financebench_netflix",
+  "aliases": [
+    "Netflix"
+  ],
+  "currency": "USD",
+  "documents": [
+    {
+      "doc_id": "netflix_2015_10k",
+      "path": "data/raw/financebench_netflix/docs/netflix_2015_10k.pdf",
+      "title": "Netflix 10K 2015FY (NETFLIX_2015_10K)",
+      "source_type": "annual_report",
+      "period": "2015FY",
+      "doc_date": null,
+      "published_at": null,
+      "issuer": "Netflix",
+      "is_primary": true,
+      "url": "https://d18rn0p25nwr6d.cloudfront.net/CIK-0001065280/7c37ae9c-ace5-4ad5-ab02-6b5e82c5ff8f.pdf",
+      "language": "en"
+    },
+    {
+      "doc_id": "netflix_2017_10k",
+      "path": "data/raw/financebench_netflix/docs/netflix_2017_10k.pdf",
+      "title": "Netflix 10K 2017FY (NETFLIX_2017_10K)",
+      "source_type": "annual_report",
+      "period": "2017FY",
+      "doc_date": null,
+      "published_at": null,
+      "issuer": "Netflix",
+      "is_primary": true,
+      "url": "https://d18rn0p25nwr6d.cloudfront.net/CIK-0001065280/105c44c4-a362-4ed5-b606-78f512ff277c.pdf",
+      "language": "en"
+    }
+  ]
+}

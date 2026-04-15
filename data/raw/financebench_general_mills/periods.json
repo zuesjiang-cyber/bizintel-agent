@@ -1,0 +1,12 @@
+{
+  "company": "financebench_general_mills",
+  "available_periods": [
+    "2019FY",
+    "2020FY",
+    "2022FY"
+  ],
+  "context_periods": [],
+  "latest_period": "2022FY",
+  "comparison_period": "2020FY",
+  "fiscal_year_end": "12-31"
+}

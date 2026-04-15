@@ -1,0 +1,48 @@
+{
+  "company": "financebench_3m",
+  "aliases": [
+    "3M"
+  ],
+  "currency": "USD",
+  "documents": [
+    {
+      "doc_id": "3m_2018_10k",
+      "path": "data/raw/financebench_3m/docs/3m_2018_10k.pdf",
+      "title": "3M 10K 2018FY (3M_2018_10K)",
+      "source_type": "annual_report",
+      "period": "2018FY",
+      "doc_date": null,
+      "published_at": null,
+      "issuer": "3M",
+      "is_primary": true,
+      "url": "https://investors.3m.com/financials/sec-filings/content/0001558370-19-000470/0001558370-19-000470.pdf",
+      "language": "en"
+    },
+    {
+      "doc_id": "3m_2022_10k",
+      "path": "data/raw/financebench_3m/docs/3m_2022_10k.pdf",
+      "title": "3M 10K 2022FY (3M_2022_10K)",
+      "source_type": "annual_report",
+      "period": "2022FY",
+      "doc_date": null,
+      "published_at": null,
+      "issuer": "3M",
+      "is_primary": true,
+      "url": "https://investors.3m.com/financials/sec-filings/content/0000066740-23-000014/0000066740-23-000014.pdf",
+      "language": "en"
+    },
+    {
+      "doc_id": "3m_2023q2_10q",
+      "path": "data/raw/financebench_3m/docs/3m_2023q2_10q.pdf",
+      "title": "3M 10Q 2023Q2 (3M_2023Q2_10Q)",
+      "source_type": "quarterly_report",
+      "period": "2023Q2",
+      "doc_date": null,
+      "published_at": null,
+      "issuer": "3M",
+      "is_primary": true,
+      "url": "https://investors.3m.com/financials/sec-filings/content/0000066740-23-000058/0000066740-23-000058.pdf",
+      "language": "en"
+    }
+  ]
+}

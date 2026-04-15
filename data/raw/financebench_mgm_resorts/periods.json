@@ -1,0 +1,14 @@
+{
+  "company": "financebench_mgm_resorts",
+  "available_periods": [
+    "2018FY",
+    "2020FY",
+    "2022FY",
+    "2022Q4",
+    "2023Q2"
+  ],
+  "context_periods": [],
+  "latest_period": "2023Q2",
+  "comparison_period": "2022Q4",
+  "fiscal_year_end": "12-31"
+}

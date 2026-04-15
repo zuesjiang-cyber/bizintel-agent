@@ -1,0 +1,35 @@
+{
+  "company": "financebench_verizon",
+  "aliases": [
+    "Verizon"
+  ],
+  "currency": "USD",
+  "documents": [
+    {
+      "doc_id": "verizon_2021_10k",
+      "path": "data/raw/financebench_verizon/docs/verizon_2021_10k.pdf",
+      "title": "Verizon 10K 2021FY (VERIZON_2021_10K)",
+      "source_type": "annual_report",
+      "period": "2021FY",
+      "doc_date": null,
+      "published_at": null,
+      "issuer": "Verizon",
+      "is_primary": true,
+      "url": "https://www.verizon.com/about/sites/default/files/2021-Annual-Report-on-Form-10-K.pdf",
+      "language": "en"
+    },
+    {
+      "doc_id": "verizon_2022_10k",
+      "path": "data/raw/financebench_verizon/docs/verizon_2022_10k.pdf",
+      "title": "Verizon 10K 2022FY (VERIZON_2022_10K)",
+      "source_type": "annual_report",
+      "period": "2022FY",
+      "doc_date": null,
+      "published_at": null,
+      "issuer": "Verizon",
+      "is_primary": true,
+      "url": "https://www.verizon.com/about/sites/default/files/2022-Annual-Report-on-Form-10K.pdf",
+      "language": "en"
+    }
+  ]
+}

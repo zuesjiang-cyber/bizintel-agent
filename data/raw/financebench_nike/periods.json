@@ -1,0 +1,13 @@
+{
+  "company": "financebench_nike",
+  "available_periods": [
+    "2018FY",
+    "2019FY",
+    "2021FY",
+    "2023FY"
+  ],
+  "context_periods": [],
+  "latest_period": "2023FY",
+  "comparison_period": "2021FY",
+  "fiscal_year_end": "12-31"
+}

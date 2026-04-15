@@ -1,0 +1,11 @@
+{
+  "company": "financebench_amazon",
+  "available_periods": [
+    "2017FY",
+    "2019FY"
+  ],
+  "context_periods": [],
+  "latest_period": "2019FY",
+  "comparison_period": "2017FY",
+  "fiscal_year_end": "12-31"
+}

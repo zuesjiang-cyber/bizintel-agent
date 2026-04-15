@@ -1,0 +1,48 @@
+{
+  "company": "financebench_general_mills",
+  "aliases": [
+    "General Mills"
+  ],
+  "currency": "USD",
+  "documents": [
+    {
+      "doc_id": "generalmills_2019_10k",
+      "path": "data/raw/financebench_general_mills/docs/generalmills_2019_10k.pdf",
+      "title": "General Mills 10K 2019FY (GENERALMILLS_2019_10K)",
+      "source_type": "annual_report",
+      "period": "2019FY",
+      "doc_date": null,
+      "published_at": null,
+      "issuer": "General Mills",
+      "is_primary": true,
+      "url": "https://d18rn0p25nwr6d.cloudfront.net/CIK-0000040704/0fd13703-8eed-4b60-b46c-b2b3199887dc.pdf",
+      "language": "en"
+    },
+    {
+      "doc_id": "generalmills_2020_10k",
+      "path": "data/raw/financebench_general_mills/docs/generalmills_2020_10k.pdf",
+      "title": "General Mills 10K 2020FY (GENERALMILLS_2020_10K)",
+      "source_type": "annual_report",
+      "period": "2020FY",
+      "doc_date": null,
+      "published_at": null,
+      "issuer": "General Mills",
+      "is_primary": true,
+      "url": "https://s29.q4cdn.com/993087495/files/doc_downloads/2020/F20_10K_Final_07.01.2020.pdf",
+      "language": "en"
+    },
+    {
+      "doc_id": "generalmills_2022_10k",
+      "path": "data/raw/financebench_general_mills/docs/generalmills_2022_10k.pdf",
+      "title": "General Mills 10K 2022FY (GENERALMILLS_2022_10K)",
+      "source_type": "annual_report",
+      "period": "2022FY",
+      "doc_date": null,
+      "published_at": null,
+      "issuer": "General Mills",
+      "is_primary": true,
+      "url": "https://d18rn0p25nwr6d.cloudfront.net/CIK-0000040704/e031af8c-f4fd-4350-9275-d3dbbec95c8c.pdf",
+      "language": "en"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "company": "financebench_kraft_heinz",
+  "aliases": [
+    "Kraft Heinz"
+  ],
+  "currency": "USD",
+  "documents": [
+    {
+      "doc_id": "kraftheinz_2019_10k",
+      "path": "data/raw/financebench_kraft_heinz/docs/kraftheinz_2019_10k.html",
+      "title": "Kraft Heinz 10K 2019FY (KRAFTHEINZ_2019_10K)",
+      "source_type": "annual_report",
+      "period": "2019FY",
+      "doc_date": null,
+      "published_at": null,
+      "issuer": "Kraft Heinz",
+      "is_primary": true,
+      "url": "https://www.sec.gov/Archives/edgar/data/1637459/000163745920000027/form10-k2019.htm",
+      "language": "en"
+    }
+  ]
+}

@@ -13,7 +13,6 @@ into a demo memo, a trace walkthrough, and a verification preview.
 - Average `verified_claim_coverage`: 88.51%
 - Average `numeric_exact_match_rate`: 92.19%
 - Average `primary_source_claim_coverage`: 88.09%
-- Average `gold_benchmark_pass`: 15.33%
 - Average `answer_quality`: 3.43
 
 ## Selected Case

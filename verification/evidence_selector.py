@@ -23,6 +23,41 @@ STOPWORDS = {
     "year", "fiscal", "company", "report", "reported", "results", "statement", "financial",
     "analysis", "section", "question", "during", "major", "using",
 }
+PRIMARY_SOURCE_TYPES = {
+    "annual_report",
+    "quarterly_report",
+    "quarterly_results",
+    "earnings_call_transcript",
+    "shareholder_letter",
+}
+FINANCIAL_LABEL_PHRASES = (
+    "cash and cash equivalents",
+    "short-term investments",
+    "accounts receivable",
+    "total current assets",
+    "total current liabilities",
+    "capital expenditures",
+    "capital expenditure",
+    "capex",
+    "net sales",
+    "revenue",
+    "operating income",
+    "net income",
+    "ebitda",
+    "ebitdar",
+    "legal proceedings",
+    "material legal proceedings",
+    "revolving credit agreement",
+    "aggregate commitments",
+    "borrowing capacity",
+    "proposal",
+    "vote",
+    "products",
+    "services",
+    "customer concentration",
+    "major customer",
+    "significant customer",
+)
 
 
 @dataclass
@@ -76,17 +111,65 @@ class EvidenceSelector:
         limit = max(1, int(settings.verification_max_chunks_per_source))
         seen_keys = set()
         selected: List[EvidenceCandidate] = []
+        processed_sources = set()
 
         for source_id in self._ordered_source_ids(claim):
             if source_id == "no_citation" or source_id not in evidence_store:
                 continue
+            processed_sources.add(source_id)
             chunks = self.normalize_evidence_chunks(source_id, evidence_store[source_id])
             if not chunks:
                 continue
             selected.extend(self._select_candidates_from_source(claim, chunks, limit=limit, seen_keys=seen_keys))
 
+        if self._claim_requires_primary_support(claim):
+            supplemental_sources = []
+            for source_id, raw_chunks in evidence_store.items():
+                if source_id == "no_citation" or source_id in processed_sources:
+                    continue
+                chunks = self.normalize_evidence_chunks(source_id, raw_chunks)
+                if not chunks or not self._source_has_primary_support(chunks):
+                    continue
+                supplemental_sources.append((source_id, chunks))
+            supplemental_sources.sort(
+                key=lambda item: (
+                    1 if self._source_has_primary_support(item[1]) else 0,
+                    len(item[1]),
+                    item[0],
+                ),
+                reverse=True,
+            )
+            for source_id, chunks in supplemental_sources:
+                selected.extend(self._select_candidates_from_source(claim, chunks, limit=limit, seen_keys=seen_keys))
+
         selected.sort(key=lambda item: item.match_score, reverse=True)
         return selected
+
+    def select_primary_rebinding_candidates(
+        self,
+        claim: Claim,
+        evidence_store: Dict[str, List[object]],
+        *,
+        exclude_source_ids: Optional[Sequence[str]] = None,
+        max_candidates: int = 8,
+    ) -> List[EvidenceCandidate]:
+        limit = max(1, int(settings.verification_max_chunks_per_source))
+        seen_keys = set()
+        excluded = set(exclude_source_ids or [])
+        selected: List[EvidenceCandidate] = []
+
+        for source_id, raw_chunks in evidence_store.items():
+            if source_id in excluded or source_id == "no_citation":
+                continue
+            chunks = self.normalize_evidence_chunks(source_id, raw_chunks)
+            if not chunks or not self._source_has_primary_support(chunks):
+                continue
+            for candidate in self._select_candidates_from_source(claim, chunks, limit=limit, seen_keys=seen_keys):
+                if self._candidate_has_primary_support(candidate):
+                    selected.append(candidate)
+
+        selected.sort(key=lambda item: item.match_score, reverse=True)
+        return selected[:max_candidates]
 
     def select_from_chunks(self, claim: Claim, chunks: Sequence[dict], *, limit: Optional[int] = None) -> List[EvidenceCandidate]:
         return self._select_candidates_from_source(
@@ -209,6 +292,8 @@ class EvidenceSelector:
         reasons: List[str] = []
         chunk_text = chunk["text"]
         chunk_lower = chunk_text.lower()
+        requires_primary = self._claim_requires_primary_support(claim)
+        has_primary_support = self._chunk_has_primary_support(chunk)
 
         if chunk["chunk_id"] in claim.cited_chunks:
             score += 120.0
@@ -227,6 +312,11 @@ class EvidenceSelector:
             score += 30.0
             reasons.append("metric_match")
 
+        phrase_hits = [phrase for phrase in self._claim_label_phrases(claim) if phrase in chunk_lower]
+        if phrase_hits:
+            score += 24.0 + (8.0 * min(2, len(phrase_hits)))
+            reasons.append("financial_label_match")
+
         claim_numbers = {self._normalize_numeric_token(value) for value in claim.extracted_numbers if value}
         chunk_numbers = {self._normalize_numeric_token(match.group(0)) for match in NUMBER_PATTERN.finditer(chunk_text)}
         numeric_overlap = claim_numbers & chunk_numbers
@@ -240,6 +330,13 @@ class EvidenceSelector:
             score += 15.0
             reasons.append("unit_match")
 
+        if requires_primary and has_primary_support:
+            score += 32.0
+            reasons.append("primary_source_preferred")
+        elif requires_primary and has_primary_support is False:
+            score -= 18.0
+            reasons.append("non_primary_penalty")
+
         claim_tokens = self._focus_tokens(claim.text)
         chunk_tokens = self._focus_tokens(chunk_text)
         overlap = claim_tokens & chunk_tokens
@@ -248,20 +345,117 @@ class EvidenceSelector:
             reasons.append("token_overlap")
 
         if claim.claim_type in {"causal", "management_commentary"} and any(
-            marker in chunk_lower for marker in ("due to", "because", "driven by", "management", "expects", "guidance")
+            marker in chunk_lower
+            for marker in (
+                "due to",
+                "because",
+                "driven by",
+                "primarily due to",
+                "resulting from",
+                "reflecting",
+                "management",
+                "expects",
+                "guidance",
+            )
         ):
             score += 20.0
             reasons.append("semantic_marker_match")
 
+        noise_penalty = self._structural_noise_penalty(claim, chunk_text, chunk_tokens, phrase_hits)
+        if noise_penalty:
+            score -= noise_penalty
+            reasons.append("noise_penalty")
+
         if not reasons:
             reasons.append("fallback")
         return score, reasons
+
+    def _claim_requires_primary_support(self, claim: Claim) -> bool:
+        if getattr(claim, "requires_primary_source", False):
+            return True
+        if claim.claim_type in {"numeric", "comparative", "causal", "management_commentary"}:
+            return True
+        if claim.contains_numbers:
+            return True
+        return False
+
+    def _chunk_has_primary_support(self, chunk: dict) -> Optional[bool]:
+        if chunk.get("is_primary") is True:
+            return True
+        if chunk.get("is_primary") is False:
+            source_type = str(chunk.get("source_type") or "").strip().lower()
+            return source_type in PRIMARY_SOURCE_TYPES
+        source_type = str(chunk.get("source_type") or "").strip().lower()
+        if source_type:
+            return source_type in PRIMARY_SOURCE_TYPES
+        return None
+
+    def _claim_label_phrases(self, claim: Claim) -> List[str]:
+        lowered = claim.text.lower()
+        phrases = []
+        for phrase in FINANCIAL_LABEL_PHRASES:
+            if phrase in lowered:
+                phrases.append(phrase)
+        metric_phrase = (claim.metric or "").replace("_", " ").strip().lower()
+        if metric_phrase and metric_phrase not in phrases:
+            phrases.append(metric_phrase)
+        subject_phrase = (claim.subject or "").replace("_", " ").strip().lower()
+        if subject_phrase and len(subject_phrase.split()) >= 2 and subject_phrase not in phrases:
+            phrases.append(subject_phrase)
+        return phrases
+
+    def _structural_noise_penalty(
+        self,
+        claim: Claim,
+        text: str,
+        chunk_tokens: set[str],
+        phrase_hits: Sequence[str],
+    ) -> float:
+        lowered = text.lower()
+        penalty = 0.0
+        year_count = len({match.group(0) for match in re.finditer(r"\b20\d{2}\b", text)})
+        numeric_count = len(NUMBER_PATTERN.findall(text))
+        query_focus_overlap = len(self._focus_tokens(claim.text) & chunk_tokens)
+
+        if "please visit" in lowered or "investors." in lowered or "https://" in lowered:
+            penalty += 35.0
+        if year_count >= 5 and any(
+            phrase in lowered
+            for phrase in (
+                "earnings press release",
+                "form 10-k",
+                "form 10-q",
+                "prepared management remarks",
+                "transcript - investors q&a",
+            )
+        ):
+            penalty += 45.0
+        if numeric_count >= 18 and not phrase_hits and query_focus_overlap <= 2:
+            penalty += 28.0
+        if numeric_count >= 10 and any(marker in lowered for marker in ("see accompanying notes", "page ", "unaudited")) and not phrase_hits:
+            penalty += 12.0
+        return penalty
 
     def _resolve_primary_flag(self, chunks: List[dict]) -> Optional[bool]:
         flags = [chunk.get("is_primary") for chunk in chunks if chunk.get("is_primary") is not None]
         if not flags:
             return None
         return all(bool(flag) for flag in flags)
+
+    def _source_has_primary_support(self, chunks: Sequence[dict]) -> bool:
+        for chunk in chunks:
+            if chunk.get("is_primary") is True:
+                return True
+            source_type = str(chunk.get("source_type") or "").strip().lower()
+            if source_type in PRIMARY_SOURCE_TYPES:
+                return True
+        return False
+
+    def _candidate_has_primary_support(self, candidate: EvidenceCandidate) -> bool:
+        if candidate.is_primary is True:
+            return True
+        source_type = str(candidate.source_type or "").strip().lower()
+        return source_type in PRIMARY_SOURCE_TYPES
 
     def _normalize_numeric_token(self, token: str) -> str:
         return token.lower().replace("$", "").replace(",", "").strip()

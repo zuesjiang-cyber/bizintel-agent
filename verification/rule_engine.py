@@ -305,8 +305,12 @@ class RuleEngine:
             return None
         evidence_units = self._extract_unit_tokens(evidence_text)
         if not evidence_units:
-            return None
-        return bool(claim_units & evidence_units)
+            return True if self._supports_derived_numeric_claim(claim, evidence_text) else None
+        if claim_units & evidence_units:
+            return True
+        if self._supports_derived_numeric_claim(claim, evidence_text):
+            return True
+        return False
 
     def verify_directionality_alignment(self, claim: Claim, evidence_text: str) -> Optional[bool]:
         claim_dir = self._extract_directionality_tokens(claim.directionality or claim.text)
@@ -346,6 +350,10 @@ class RuleEngine:
             return self._supports_quick_ratio_claim(claim, evidence_text)
         if "working capital" in lowered:
             return self._supports_working_capital_claim(claim, evidence_text)
+        if any(token in lowered for token in ("ebitda", "unadjusted ebitda")) and any(token in lowered for token in ("capex", "capital expenditures", "capital expenditure")) and any(token in lowered for token in ("less", "minus")):
+            return self._supports_ebitda_less_capex_claim(claim, evidence_text)
+        if "margin" in lowered:
+            return self._supports_margin_formula_claim(claim, evidence_text)
         if self._supports_line_item_numeric_claim(claim, evidence_text):
             return True
         return False
@@ -434,6 +442,73 @@ class RuleEngine:
         if not claim_values:
             return True
         return abs(abs(working_capital) - abs(claim_values[0])) <= max(1.0, abs(working_capital) * 0.02)
+
+    def _supports_ebitda_less_capex_claim(self, claim: Claim, evidence_text: str) -> bool:
+        ebitda = self._extract_labeled_numeric_value(
+            evidence_text,
+            ["unadjusted ebitda", "adjusted ebitda", "ebitda"],
+        )
+        capex = self._extract_labeled_numeric_value(
+            evidence_text,
+            ["capital expenditures", "capital expenditure"],
+        )
+        if ebitda is None or capex is None:
+            return False
+        claim_value = self._extract_first_claim_numeric_value(claim)
+        if claim_value is None:
+            return False
+        computed = float(ebitda) - abs(float(capex))
+        return abs(computed - claim_value) <= max(1.0, abs(computed) * 0.02)
+
+    def _supports_margin_formula_claim(self, claim: Claim, evidence_text: str) -> bool:
+        claim_percent = self._extract_claim_percentage_value(claim)
+        if claim_percent is None:
+            return False
+        numerator_labels = self._margin_numerator_labels(claim.text)
+        if not numerator_labels:
+            return False
+        numerator = self._extract_labeled_numeric_value(evidence_text, numerator_labels)
+        revenue = self._extract_labeled_numeric_value(
+            evidence_text,
+            ["total revenue", "net revenue", "net sales", "revenue", "sales"],
+        )
+        if numerator is None or revenue in (None, 0):
+            return False
+        computed_percent = (float(numerator) / float(revenue)) * 100.0
+        return abs(computed_percent - claim_percent) <= 0.2
+
+    def _margin_numerator_labels(self, text: str) -> List[str]:
+        lowered = (text or "").lower()
+        if "depreciation and amortization" in lowered or "d&a" in lowered:
+            return ["depreciation and amortization"]
+        if "operating margin" in lowered or "operating income" in lowered:
+            return ["operating income"]
+        if "unadjusted ebitda" in lowered:
+            return ["unadjusted ebitda", "adjusted ebitda", "ebitda"]
+        if "ebitda" in lowered:
+            return ["ebitda", "adjusted ebitda", "unadjusted ebitda"]
+        if "net profit margin" in lowered or "net income" in lowered:
+            return ["net income"]
+        return []
+
+    def _extract_first_claim_numeric_value(self, claim: Claim) -> Optional[float]:
+        values = self._parse_claim_numeric_values(claim)
+        return values[0] if values else None
+
+    def _extract_claim_percentage_value(self, claim: Claim) -> Optional[float]:
+        for raw in claim.extracted_numbers:
+            if "%" not in raw:
+                continue
+            parsed = self._parse_numeric_literal(raw.replace("%", ""))
+            if parsed is not None:
+                return parsed
+        match = re.search(r"(\d+(?:\.\d+)?)\s*%", claim.text)
+        if not match:
+            return None
+        try:
+            return float(match.group(1))
+        except ValueError:
+            return None
 
     def _normalize_numeric_token(self, token: str) -> str:
         return token.lower().replace("$", "").replace(",", "").strip()

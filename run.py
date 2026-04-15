@@ -40,8 +40,8 @@ def main():
             mode = AnalysisMode.COMPETITIVE
 
     if not settings.openai_api_key and not args.demo and settings.llm_mode.lower() != "stub":
-        print("未检测到 Minimax API Key。请进行隐式输入：")
-        api_key = getpass.getpass("MINIMAX_API_KEY: ")
+        print("未检测到 OPENAI_API_KEY（兼容 MINIMAX_API_KEY）。请进行隐式输入：")
+        api_key = getpass.getpass("OPENAI_API_KEY: ")
         if not api_key.strip():
             print("❌ 错误：必须提供 API Key 才能运行", file=sys.stderr)
             sys.exit(1)

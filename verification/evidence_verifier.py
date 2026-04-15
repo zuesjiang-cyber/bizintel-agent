@@ -327,6 +327,11 @@ class EvidenceVerifier:
                 scored_candidates,
                 key=lambda item: (
                     1 if explicit_chunk_set and explicit_chunk_set.issubset(set(item["candidate"].chunk_ids)) else 0,
+                    1
+                    if self._claim_requires_primary_source(claim)
+                    and self._has_primary_source(item["candidate"])
+                    and float(item["entailment"]) >= max(self.moderate_threshold - 0.08, 0.0)
+                    else 0,
                     item["entailment"],
                     item["candidate"].match_score,
                     -item["contradiction"],
@@ -336,6 +341,21 @@ class EvidenceVerifier:
             score = float(best_entry["entailment"])
             contradiction_score = float(best_entry["contradiction"])
             rule_check = self.rule_engine.evaluate_candidate(claim, candidate)
+            rebound_note = None
+            if not rule_check.passed and rule_check.failure_reason == "primary_source_missing":
+                rebound = self._try_rebind_primary_source_candidate(
+                    claim,
+                    scored_candidates,
+                    evidence_store,
+                    model,
+                )
+                if rebound is not None:
+                    best_entry = rebound["entry"]
+                    candidate = best_entry["candidate"]
+                    score = float(best_entry["entailment"])
+                    contradiction_score = float(best_entry["contradiction"])
+                    rule_check = rebound["rule_check"]
+                    rebound_note = rebound["note"]
             contradiction_detected = bool(rule_check.details.get("contradiction_detected"))
             confidence = ConfidenceLevel.WEAK
             failure_reason = None
@@ -389,8 +409,9 @@ class EvidenceVerifier:
                         for entry in sorted(scored_candidates, key=lambda item: (item["entailment"], item["candidate"].match_score), reverse=True)[:5]
                     ],
                     "rule_check": self._serialize_rule_check(rule_check),
+                    "primary_rebinding_applied": bool(rebound_note),
                 },
-                review_notes=list(rule_check.details.get("review_notes", [])),
+                review_notes=list(rule_check.details.get("review_notes", [])) + ([rebound_note] if rebound_note else []),
             )
 
         return [temp_results[claim.claim_id] for claim in normalized_claims]
@@ -449,6 +470,84 @@ class EvidenceVerifier:
 
     def _claim_requires_numeric_gate(self, claim: Claim) -> bool:
         return self.rule_engine.claim_requires_numeric_gate(claim)
+
+    def _score_candidates_for_claim(
+        self,
+        claim: Claim,
+        candidates: List[EvidenceCandidate],
+        *,
+        model: CrossEncoder,
+    ) -> List[dict]:
+        if not candidates:
+            return []
+        pairs = []
+        for candidate in candidates:
+            excerpt = self._extract_relevant_excerpt(candidate.text, claim.text)
+            candidate.excerpt_text = excerpt
+            if len(candidate.chunk_ids) > 1 and not candidate.excerpt_texts:
+                candidate.excerpt_texts = [excerpt]
+            pairs.append((excerpt, claim.text))
+        scores = self._predict_pairs(model, pairs)
+        if scores.ndim == 1:
+            scores = np.expand_dims(scores, axis=0)
+        exp_scores = np.exp(scores - np.max(scores, axis=1, keepdims=True))
+        probs = exp_scores / np.sum(exp_scores, axis=1, keepdims=True)
+        entailment_scores = probs[:, 1]
+        contradiction_scores = probs[:, 0]
+        return [
+            {
+                "candidate": candidate,
+                "entailment": float(entailment),
+                "contradiction": float(contradiction),
+            }
+            for candidate, entailment, contradiction in zip(candidates, entailment_scores, contradiction_scores)
+        ]
+
+    def _try_rebind_primary_source_candidate(
+        self,
+        claim: Claim,
+        scored_candidates: List[dict],
+        evidence_store: Dict[str, List[object]],
+        model: CrossEncoder,
+    ) -> Optional[dict]:
+        primary_scored = [
+            entry for entry in scored_candidates
+            if self._has_primary_source(entry["candidate"])
+        ]
+        supplemental = self.evidence_selector.select_primary_rebinding_candidates(
+            claim,
+            evidence_store,
+            exclude_source_ids=[source_id for source_id in claim.cited_sources if source_id != "no_citation"],
+        )
+        primary_scored.extend(self._score_candidates_for_claim(claim, supplemental, model=model))
+
+        valid_rebindings = []
+        for entry in primary_scored:
+            rule_check = self.rule_engine.evaluate_candidate(claim, entry["candidate"])
+            if not rule_check.passed:
+                continue
+            if not rule_check.details.get("primary_source_supported"):
+                continue
+            if float(entry["entailment"]) < self.moderate_threshold:
+                continue
+            valid_rebindings.append((entry, rule_check))
+
+        if not valid_rebindings:
+            return None
+
+        entry, rule_check = max(
+            valid_rebindings,
+            key=lambda item: (
+                item[0]["entailment"],
+                item[0]["candidate"].match_score,
+                -item[0]["contradiction"],
+            ),
+        )
+        return {
+            "entry": entry,
+            "rule_check": rule_check,
+            "note": f"Rebound claim to primary source {entry['candidate'].source_id}.",
+        }
 
     def _verify_numeric_alignment(self, claim: Claim, evidence_text: str) -> bool:
         return self.rule_engine.verify_numeric_alignment(claim, evidence_text)

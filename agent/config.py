@@ -8,15 +8,15 @@ class Settings(BaseSettings):
 
     openai_api_key: str = Field(
         default="",
-        validation_alias=AliasChoices("MINIMAX_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"),
+        validation_alias=AliasChoices("OPENAI_API_KEY", "MINIMAX_API_KEY", "ANTHROPIC_API_KEY"),
     )
     openai_api_base: str = Field(
-        default="https://api.minimaxi.com/anthropic",
-        validation_alias=AliasChoices("MINIMAX_API_BASE", "ANTHROPIC_BASE_URL", "OPENAI_BASE_URL", "OPENAI_API_BASE"),
+        default="https://api.openai.com/v1",
+        validation_alias=AliasChoices("OPENAI_BASE_URL", "OPENAI_API_BASE", "MINIMAX_API_BASE", "ANTHROPIC_BASE_URL"),
     )
     openai_model: str = Field(
-        default="MiniMax-M2.7",
-        validation_alias=AliasChoices("MINIMAX_MODEL", "ANTHROPIC_MODEL", "OPENAI_MODEL"),
+        default="gpt-5.2",
+        validation_alias=AliasChoices("OPENAI_MODEL", "MINIMAX_MODEL", "ANTHROPIC_MODEL"),
     )
     llm_mode: str = "auto"
     strict_live_mode: bool = Field(

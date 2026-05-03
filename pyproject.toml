@@ -21,6 +21,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+graphrag = [
+    "graphrag>=3.0,<4.0",
+    "pandas>=2.0.0",
+    "pyarrow>=15.0.0",
+]
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
@@ -32,4 +37,4 @@ requires = ["setuptools>=64.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["agent", "retrieval", "verification", "tools", "app"]
+include = ["agent", "retrieval", "verification", "tools", "app", "eval"]

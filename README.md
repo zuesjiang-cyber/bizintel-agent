@@ -1,33 +1,62 @@
-# BizIntel Agent — AI-Powered Evidence-Grounded Financial Research
+# FinTrust RAG — Auditable Financial RAG Control Plane
 
-> 🤖 Multi-Agent 编排 · LLM 驱动规划 · Hybrid RAG 混合检索 · NLI 幻觉控制 · 自主补查循环
+> Trust-first financial RAG · Benchmark forensics · Retrieval Lab · Local trace viewer · Finance hard gates
 
-一个基于 **多 Agent 协作架构** 的企业财务深度研究系统。系统由三个 AI Agent 协同工作 —— **Planner Agent** 将复杂研究问题自主拆解为原子子问题，**Summarizer Agent** 驱动双通道混合检索（BM25 + Dense + Cross-Encoder Rerank）并执行自主 gap-filling 补查循环，**Writer Agent** 基于 NLI 模型进行断言级事实核验后生成结构化研究备忘录。
+FinTrust RAG 是一个面向固定公司资料包的可信金融 RAG 控制层。它不把“多 Agent”作为主卖点，而是把财务回答拆成可验证链路：研究契约、可解释检索、证据充分性评估、claim-level verification、finance hard gates 和 publication gate。目标是让评审者能判断每个数字、期间、来源、结论是否有证据，也能复盘失败发生在哪一层。
 
-**AI / Agent 核心能力：**
+**核心能力：**
 
-- 🧠 **LLM 驱动的自主规划** — 自动判断分析模式，将研究问题拆解为带通道标签的原子子问题树
-- 🔄 **自主检索-评估-补查循环** — Agent 自主判断证据是否充分，不够就改写查询再检索，还不够就拒答
-- 🔍 **Hybrid RAG 混合检索** — BM25 词汇匹配 + Dense Embedding 语义召回 + RRF 融合 + Cross-Encoder 精排，四阶段检索管线
-- 🛡️ **NLI 幻觉控制** — 用 DeBERTa NLI 模型对每条生成断言做蕴含度评估，配合数值对齐、来源溯源、primary source 校验，主动拦截无证据支撑的结论
-- 📋 **全链路决策回放** — 每个 Agent 决策记录在 `ResearchReplayRecord` 中，支持事后审计和 trace 回放
+- **Standards-backed trust gates** — 将 RAGAS / DeepEval / TruLens / Phoenix 的 faithfulness、groundedness、context recall、context precision 等 RAG 评测范式，映射到本地 trust metrics。
+- **OpenAI / Anthropic-style audit artifacts** — 参考 eval、trace grading、citation 思路，输出 `trace.json`、`verification.csv`、benchmark report 和 ledger。
+- **Finance hard gates** — 对数字、单位、币种、期间、方向、实体、source type、primary source 做确定性校验；不通过则删除、降级或拒答。
+- **Retrieval Lab** — 展示 query、lane、候选证据、rank、score、source metadata、fallback reason，证明系统不是黑盒 RAG。
+- **Benchmark Forensics** — 将 benchmark JSON 升级为 cohort summary、failure distribution、逐题 diff 和 DuckDB-compatible ledger。
+- **Document Fidelity Harness** — 检查 processed source packs 的 page mapping、source metadata、period、unit、table-like chunks 和 chunk boundary。
 
 ![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![FinanceBench 150](https://img.shields.io/badge/FinanceBench-150_items-orange.svg)
-![Multi-Agent](https://img.shields.io/badge/Architecture-Multi--Agent-blueviolet.svg)
+![Auditable RAG](https://img.shields.io/badge/Architecture-Auditable_RAG-blueviolet.svg)
 ![Hybrid RAG](https://img.shields.io/badge/Retrieval-Hybrid_RAG-green.svg)
-![NLI Verification](https://img.shields.io/badge/Verification-NLI_DeBERTa-red.svg)
+![Finance Gates](https://img.shields.io/badge/Verification-Finance_Hard_Gates-red.svg)
+
+## 本地审计入口
+
+已固化一套审计样例，可直接查看：[Auditable RAG Workbench Showcase](docs/showcases/auditable_rag_workbench/README.md)。
+
+```bash
+# 生成 benchmark 取证报告和 DuckDB-compatible ledger
+python tools/build_benchmark_forensics.py \
+  --candidate eval/results/financebench_amd_8_stub.json \
+  --output artifacts/forensics/benchmark_report.md \
+  --ledger-output artifacts/forensics/benchmark_ledger.csv
+
+# 检查 processed source pack 的文档保真度
+python tools/document_fidelity_harness.py \
+  --processed-root data/processed \
+  --company stripe \
+  --output artifacts/forensics/document_fidelity.md
+```
+
+## 幻觉控制模型
+
+FinTrust RAG 不依赖 prompt 祈祷模型别乱说，而是使用三层门禁：
+
+| 层级 | 目标 | 对齐范式 | 失败动作 |
+|---|---|---|---|
+| Retrieval Gate | 证据是否找到了 | context recall / precision / retrieval relevance | follow-up retrieval 或拒答 |
+| Grounding Gate | 答案是否忠于证据 | faithfulness / groundedness / citation validity | 删除或降级 unsupported claim |
+| Finance Hard Gate | 财务事实是否可发布 | deterministic numeric / period / entity / source checks | 删除、降级或拒答 |
 
 ## 显著优势
 
 ### vs 传统方案对比
 
-| 维度 | 直接问 ChatGPT | 简单 RAG（向量检索+拼 prompt） | **BizIntel Agent** |
+| 维度 | 直接问 ChatGPT | 简单 RAG（向量检索+拼 prompt） | **FinTrust RAG** |
 |------|:-:|:-:|:-:|
-| **问题拆解** | ❌ 一次性端到端生成 | ❌ 单次检索直接回答 | ✅ LLM 自主拆解为原子子问题树 |
+| **问题拆解** | ❌ 一次性端到端生成 | ❌ 单次检索直接回答 | ✅ 研究契约拆解为原子子问题树 |
 | **检索质量** | ❌ 无检索，纯参数记忆 | ⚠️ 单路向量召回 | ✅ BM25 + Dense + RRF + Cross-Encoder 四阶段 |
-| **证据不足处理** | ❌ 硬编 / 幻觉 | ❌ 拿到什么写什么 | ✅ 自主补查循环，还不够就拒答 |
+| **证据不足处理** | ❌ 硬编 / 幻觉 | ❌ 拿到什么写什么 | ✅ bounded follow-up retrieval，还不够就拒答 |
 | **事实核验** | ❌ 无 | ❌ 无 | ✅ NLI 蕴含度 + 数值对齐 + 来源溯源 |
 | **幻觉控制** | ❌ 无法控制 | ⚠️ 靠 prompt 约束 | ✅ claim-level gating，unsupported 直接删除/降级 |
 | **可解释性** | ❌ 黑盒 | ⚠️ 仅返回引用 chunk | ✅ 完整决策回放 trace + 核验报告 |
@@ -35,12 +64,12 @@
 
 ### 三大核心差异化
 
-**1. 不是"套 API 的壳"，而是完整的 Agent 系统**
+**1. 不是"套 API 的壳"，而是完整的 RAG 控制链路**
 
-市面上大多数 RAG 项目的流程是 `query → 向量检索 → 拼进 prompt → LLM 回答`。BizIntel Agent 的执行链路是：
+市面上大多数 RAG 项目的流程是 `query → 向量检索 → 拼进 prompt → LLM 回答`。FinTrust RAG 的执行链路是：
 
 ```
-query → LLM 拆解子问题 → 分配通道(hard_fact/semantic) → 多轮检索-评估-补查循环
+query → 研究契约与子问题 → 分配通道(hard_fact/semantic) → 多轮检索-评估-补查循环
       → NLI 断言核验 → unsupported gating → 结构化 memo + trace + verification
 ```
 
@@ -196,13 +225,13 @@ present its Consumer Health business financial results as discontinued operation
 ```mermaid
 flowchart TD
     User["研究问题"] --> Entry["CLI / Streamlit / Demo"]
-    Entry --> Agent["HelloDeepResearchAgent"]
-    Agent --> Planner["Planner Agent"]
-    Agent --> Summarizer["Task Summarizer Agent"]
-    Agent --> Writer["Report Writer Agent"]
+    Entry --> Control["Research Control Plane"]
+    Control --> Planner["Planning Stage"]
+    Control --> Executor["Retrieval + Assessment Stage"]
+    Control --> Writer["Verification + Publication Stage"]
 
     Planner --> Tree["问题树 / 子问题状态机"]
-    Summarizer --> Tools["Trust-first RAG Function Tools<br/>provided by ResearchController"]
+    Executor --> Tools["Trust-first RAG Function Tools<br/>provided by ResearchController"]
 
     Tree --> HF["硬事实通道"]
     Tree --> SM["定性通道"]
@@ -357,13 +386,13 @@ UI 中可以查看：研究树 · 子问题状态 · 证据块 · 决策记录 �
 </details>
 
 <details>
-<summary><strong>🧠 深度技术：研究控制器与 Agent 编排</strong></summary>
+<summary><strong>🧠 深度技术：研究控制器与审计链路</strong></summary>
 
-### 三段式 Agent
+### 三段式控制链路
 
-- **Planner Agent** — 接收用户问题，拆成原子子问题，给每个子问题分配通道（hard_fact / semantic）、预算和状态
-- **Task Summarizer Agent** — 对每个子问题执行检索 → 评估 → 补查循环，底层工具由 `ResearchController` 提供
-- **Report Writer Agent** — 汇总所有子问题结果，生成结构化 memo，发布前做 claim-level gating
+- **Planning Stage** — 接收用户问题，拆成原子子问题，给每个子问题分配通道（hard_fact / semantic）、预算和状态
+- **Retrieval + Assessment Stage** — 对每个子问题执行检索 → 评估 → 补查循环，底层工具由 `ResearchController` 提供
+- **Verification + Publication Stage** — 汇总所有子问题结果，生成结构化 memo，发布前做 claim-level gating 和 finance hard gates
 
 ### 子问题状态
 
